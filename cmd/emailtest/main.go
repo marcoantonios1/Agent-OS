@@ -18,6 +18,7 @@ import (
 
 	"github.com/marcoantonios1/Agent-OS/internal/tools/email"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/email/gmail"
+	"github.com/marcoantonios1/Agent-OS/internal/tools/email/outlook"
 )
 
 // ── stub provider ─────────────────────────────────────────────────────────────
@@ -177,13 +178,22 @@ func main() {
 	var p email.EmailProvider = &stubProvider{}
 	mode := "stub"
 
-	if os.Getenv("GMAIL_CLIENT_ID") != "" {
+	switch {
+	case os.Getenv("OUTLOOK_CLIENT_ID") != "" && os.Getenv("OUTLOOK_REFRESH_TOKEN") != "":
+		op, err := outlook.NewFromEnv(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Outlook setup failed: %v\nFalling back to stub provider.\n\n", err)
+		} else {
+			p = op
+			mode = "Outlook (live) — marco_antonios1@outlook.com"
+		}
+	case os.Getenv("GMAIL_CLIENT_ID") != "":
 		gp, err := gmail.NewFromEnv(ctx)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Gmail setup failed: %v\nFalling back to stub provider.\n\n", err)
 		} else {
 			p = gp
-			mode = "Gmail (live)"
+			mode = "Gmail (live) — antoniosm384@gmail.com"
 		}
 	}
 
@@ -193,7 +203,7 @@ func main() {
 	draftTool := email.NewDraftTool(p)
 
 	fmt.Println("Agent OS — Email Tools Manual Test")
-	fmt.Printf("User: marco_antonios1@outlook.com  |  Provider: %s\n\n", mode)
+	fmt.Printf("Provider: %s\n\n", mode)
 
 	// ── email_list ─────────────────────────────────────────────────────────────
 	section("email_list")

@@ -9,6 +9,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# Load .env and export all vars so the binary inherits them.
+if [ -f "$ROOT/.env" ]; then
+    set -a
+    # shellcheck source=/dev/null
+    source "$ROOT/.env"
+    set +a
+fi
+
 echo "Building email test harness..."
 go build -o /tmp/agentos-emailtest ./cmd/emailtest/ 2>&1
 
