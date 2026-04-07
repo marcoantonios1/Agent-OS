@@ -1,10 +1,12 @@
 // emailtest is a manual test harness for the email tools.
-// It uses a stub EmailProvider with realistic data so the tools can be
-// exercised end-to-end without requiring OAuth credentials.
+// When GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, and GMAIL_REFRESH_TOKEN are set
+// it runs against your real Gmail account. Otherwise it falls back to a
+// realistic stub so you can exercise the tools without OAuth credentials.
 //
 // Usage:
 //
-//	go run ./cmd/emailtest/
+//	go run ./cmd/emailtest/                        # stub provider
+//	source .env && go run ./cmd/emailtest/         # real Gmail
 package main
 
 import (
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	"github.com/marcoantonios1/Agent-OS/internal/tools/email"
+	"github.com/marcoantonios1/Agent-OS/internal/tools/email/gmail"
 )
 
 // ── stub provider ─────────────────────────────────────────────────────────────
@@ -170,7 +173,19 @@ func section(title string) {
 
 func main() {
 	ctx := context.Background()
-	p := &stubProvider{}
+
+	var p email.EmailProvider = &stubProvider{}
+	mode := "stub"
+
+	if os.Getenv("GMAIL_CLIENT_ID") != "" {
+		gp, err := gmail.NewFromEnv(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Gmail setup failed: %v\nFalling back to stub provider.\n\n", err)
+		} else {
+			p = gp
+			mode = "Gmail (live)"
+		}
+	}
 
 	listTool := email.NewListTool(p)
 	readTool := email.NewReadTool(p)
@@ -178,7 +193,7 @@ func main() {
 	draftTool := email.NewDraftTool(p)
 
 	fmt.Println("Agent OS — Email Tools Manual Test")
-	fmt.Printf("User: marco_antonios1@outlook.com\n\n")
+	fmt.Printf("User: marco_antonios1@outlook.com  |  Provider: %s\n\n", mode)
 
 	// ── email_list ─────────────────────────────────────────────────────────────
 	section("email_list")
