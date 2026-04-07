@@ -65,22 +65,29 @@ func (s *Store) Close() {
 // Get returns the session for the given ID. Returns ErrSessionNotFound if the
 // session does not exist or has expired.
 func (s *Store) Get(sessionID string) (*sessions.Session, error) {
+	// Hold the read lock through the copy so no concurrent writer can mutate
+	// the session struct between the existence check and the copy.
 	s.mu.RLock()
 	e, ok := s.sessions[sessionID]
+	expired := ok && time.Now().After(e.expiresAt)
+	var cp sessions.Session
+	if ok && !expired {
+		cp = *e.session
+	}
 	s.mu.RUnlock()
 
-	if !ok || time.Now().After(e.expiresAt) {
-		if ok {
-			// Lazy delete of the expired entry.
+	if !ok || expired {
+		if expired {
+			// Lazy delete: re-check under write lock before deleting.
 			s.mu.Lock()
-			delete(s.sessions, sessionID)
+			if e2, still := s.sessions[sessionID]; still && time.Now().After(e2.expiresAt) {
+				delete(s.sessions, sessionID)
+			}
 			s.mu.Unlock()
 		}
 		return nil, ErrSessionNotFound
 	}
 
-	// Return a shallow copy so callers cannot mutate store internals.
-	cp := *e.session
 	return &cp, nil
 }
 
