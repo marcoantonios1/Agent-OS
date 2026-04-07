@@ -1,4 +1,4 @@
-.PHONY: build test lint run test-api
+.PHONY: build test lint run test-api test-email
 
 build:
 	go build ./...
@@ -14,3 +14,6 @@ run:
 
 test-api:
 	bash scripts/test_api.sh
+
+test-email:
+	bash scripts/test_email.sh
