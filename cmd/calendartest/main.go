@@ -169,9 +169,20 @@ func main() {
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	nextWeek := today.Add(7 * 24 * time.Hour)
 	twoWeeks := today.Add(14 * 24 * time.Hour)
+	isStub := mode == "stub"
 
 	fmt.Println("Agent OS — Calendar Tools Manual Test")
 	fmt.Printf("Provider: %s\n\n", mode)
+
+	// Fetch a real event ID for read tests when using a live provider.
+	// Look up to 30 days ahead so there's a reasonable chance of finding one.
+	var liveEventID string
+	if !isStub {
+		events, err := p.List(ctx, today.Add(-30*24*time.Hour), today.Add(30*24*time.Hour))
+		if err == nil && len(events) > 0 {
+			liveEventID = events[0].ID
+		}
+	}
 
 	// ── calendar_list ──────────────────────────────────────────────────────────
 	section("calendar_list")
@@ -227,12 +238,26 @@ func main() {
 	// ── calendar_read ──────────────────────────────────────────────────────────
 	section("calendar_read")
 
-	run("read evt-stub-001 (team standup)", func() (string, error) {
-		return readTool.Execute(ctx, mustJSON(map[string]string{"id": "evt-stub-001"}))
+	run("read first event (stub: standup / live: first found)", func() (string, error) {
+		id := "evt-stub-001"
+		if !isStub {
+			if liveEventID == "" {
+				return "[skipped — no events found in ±30 days to read]", nil
+			}
+			id = liveEventID
+		}
+		return readTool.Execute(ctx, mustJSON(map[string]string{"id": id}))
 	})
 
-	run("read evt-stub-002 (lunch with bob)", func() (string, error) {
-		return readTool.Execute(ctx, mustJSON(map[string]string{"id": "evt-stub-002"}))
+	run("read second event (stub: lunch / live: same first event again)", func() (string, error) {
+		id := "evt-stub-002"
+		if !isStub {
+			if liveEventID == "" {
+				return "[skipped — no events found in ±30 days to read]", nil
+			}
+			id = liveEventID
+		}
+		return readTool.Execute(ctx, mustJSON(map[string]string{"id": id}))
 	})
 
 	run("read non-existent ID → expect error", func() (string, error) {
