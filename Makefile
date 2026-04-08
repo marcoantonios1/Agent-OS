@@ -1,4 +1,4 @@
-.PHONY: build test lint run test-api test-email
+.PHONY: build test lint run test-api test-email test-calendar
 
 build:
 	go build ./...
@@ -17,3 +17,6 @@ test-api:
 
 test-email:
 	bash scripts/test_email.sh
+
+test-calendar:
+	bash scripts/test_calendar.sh
