@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/marcoantonios1/Agent-OS/internal/approval"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/memory"
@@ -22,6 +23,8 @@ func main() {
 	store := memory.NewStore()
 	defer store.Close()
 
+	approvals := approval.NewMemoryStore()
+
 	llm := newLLMClient()
 	classifier := router.NewLLMClassifier(llm)
 
@@ -31,7 +34,7 @@ func main() {
 		router.IntentResearch: &placeholderAgent{name: "research"},
 	}
 
-	r := router.New(classifier, agents, store)
+	r := router.New(classifier, agents, store, approvals)
 	h := web.NewHandler(r)
 
 	slog.Info("Agent OS starting", "port", port)

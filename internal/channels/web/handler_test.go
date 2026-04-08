@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
+	"github.com/marcoantonios1/Agent-OS/internal/approval"
 	"github.com/marcoantonios1/Agent-OS/internal/memory"
 	"github.com/marcoantonios1/Agent-OS/internal/router"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
@@ -54,6 +55,7 @@ func newFixture(t *testing.T, intent router.Intent, agentOutput string) *testFix
 		&stubClassifier{intent: intent},
 		map[router.Intent]router.Agent{intent: agent},
 		store,
+		approval.NewMemoryStore(),
 	)
 	srv := httptest.NewServer(web.NewHandler(r))
 	t.Cleanup(srv.Close)
@@ -251,6 +253,7 @@ func TestChat_PanicRecovery(t *testing.T) {
 		&stubClassifier{intent: router.IntentComms},
 		map[router.Intent]router.Agent{router.IntentComms: &panicAgent{}},
 		store,
+		approval.NewMemoryStore(),
 	)
 	srv := httptest.NewServer(web.NewHandler(r))
 	defer srv.Close()
@@ -275,6 +278,7 @@ func TestChat_UnknownIntent_NoError(t *testing.T) {
 		&stubClassifier{intent: router.IntentUnknown},
 		map[router.Intent]router.Agent{},
 		store,
+		approval.NewMemoryStore(),
 	)
 	srv := httptest.NewServer(web.NewHandler(r))
 	defer srv.Close()

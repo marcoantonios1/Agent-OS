@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/marcoantonios1/Agent-OS/internal/approval"
 	"github.com/marcoantonios1/Agent-OS/internal/memory"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
@@ -55,6 +56,7 @@ func newRouter(intent Intent, agentOutput string) (*Router, *stubAgent, *memory.
 		&stubClassifier{intent: intent},
 		map[Intent]Agent{intent: agent},
 		store,
+		approval.NewMemoryStore(),
 	)
 	return r, agent, store
 }
@@ -114,6 +116,8 @@ func TestRoute_UnknownIntent_ReturnsHelpfulMessage(t *testing.T) {
 		&stubClassifier{intent: IntentUnknown},
 		map[Intent]Agent{},
 		store,
+	
+		approval.NewMemoryStore(),
 	)
 	out, err := r.Route(context.Background(), newMsg("sess-4", "user-4", "🤔"))
 	if err != nil {
@@ -134,6 +138,8 @@ func TestRoute_UnregisteredIntent_ReturnsHelpfulMessage(t *testing.T) {
 		&stubClassifier{intent: IntentBuilder},
 		map[Intent]Agent{},
 		store,
+	
+		approval.NewMemoryStore(),
 	)
 	out, err := r.Route(context.Background(), newMsg("sess-5", "user-5", "help"))
 	if err != nil {
@@ -150,6 +156,8 @@ func TestRoute_ClassifierError_FallsBackToUnknown(t *testing.T) {
 		&stubClassifier{intent: IntentUnknown, err: errors.New("LLM unavailable")},
 		map[Intent]Agent{},
 		store,
+	
+		approval.NewMemoryStore(),
 	)
 	// Should not return an error — classifier failures are non-fatal.
 	out, err := r.Route(context.Background(), newMsg("sess-6", "user-6", "hello"))
@@ -168,6 +176,8 @@ func TestRoute_AgentError_PropagatesError(t *testing.T) {
 		&stubClassifier{intent: IntentComms},
 		map[Intent]Agent{IntentComms: agent},
 		store,
+	
+		approval.NewMemoryStore(),
 	)
 	_, err := r.Route(context.Background(), newMsg("sess-7", "user-7", "hi"))
 	if err == nil {

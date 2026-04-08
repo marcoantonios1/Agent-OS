@@ -184,6 +184,39 @@ func (e *graphEvent) toEvent() calendar.Event {
 	return ev
 }
 
+// Update applies a partial update to an existing event via PATCH.
+func (p *Provider) Update(ctx context.Context, input calendar.UpdateEventInput) (*calendar.Event, error) {
+	patch := map[string]any{}
+	if input.Title != "" {
+		patch["subject"] = input.Title
+	}
+	if input.Description != "" {
+		patch["body"] = map[string]string{"contentType": "Text", "content": input.Description}
+	}
+	if input.Location != "" {
+		patch["location"] = map[string]string{"displayName": input.Location}
+	}
+	if !input.Start.IsZero() {
+		patch["start"] = map[string]string{
+			"dateTime": input.Start.UTC().Format(time.RFC3339),
+			"timeZone": "UTC",
+		}
+	}
+	if !input.End.IsZero() {
+		patch["end"] = map[string]string{
+			"dateTime": input.End.UTC().Format(time.RFC3339),
+			"timeZone": "UTC",
+		}
+	}
+	endpoint := fmt.Sprintf("%s/events/%s", graphBase, input.EventID)
+	var updated graphEvent
+	if err := p.patch(ctx, endpoint, patch, &updated); err != nil {
+		return nil, fmt.Errorf("outlook calendar update %s: %w", input.EventID, err)
+	}
+	e := updated.toEvent()
+	return &e, nil
+}
+
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
 
 func (p *Provider) get(ctx context.Context, endpoint string, out any) error {
@@ -228,6 +261,34 @@ func (p *Provider) post(ctx context.Context, endpoint string, body any, out any)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		var e struct {
+			Error struct{ Message string `json:"message"` } `json:"error"`
+		}
+		json.NewDecoder(resp.Body).Decode(&e) //nolint:errcheck
+		return fmt.Errorf("graph API %s: %s", resp.Status, e.Error.Message)
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+func (p *Provider) patch(ctx context.Context, endpoint string, body any, out any) error {
+	b, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, endpoint, strings.NewReader(string(b)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
 		var e struct {
 			Error struct{ Message string `json:"message"` } `json:"error"`
 		}

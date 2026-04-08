@@ -6,12 +6,28 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/marcoantonios1/Agent-OS/internal/approval"
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 )
 
-// ErrApprovalRequired is returned by calendar_create when the approval gate
-// has not been set. No event is ever created without explicit approval.
-var ErrApprovalRequired = fmt.Errorf("calendar_create: explicit approval required — set approved=true in the tool input")
+// pendingResponse is returned (as JSON, not an error) when a tool call requires
+// user approval that has not yet been granted.
+type pendingResponse struct {
+	Status      string `json:"status"`
+	ActionID    string `json:"action_id"`
+	Description string `json:"description"`
+	Message     string `json:"message"`
+}
+
+func pendingJSON(actionID, description string) string {
+	b, _ := json.Marshal(pendingResponse{
+		Status:      "pending_approval",
+		ActionID:    actionID,
+		Description: description,
+		Message:     "This action requires your explicit approval. Reply with 'confirm' or 'yes' to proceed.",
+	})
+	return string(b)
+}
 
 // NewListTool returns the calendar_list tool.
 func NewListTool(p CalendarProvider) *ListTool { return &ListTool{p: p} }
@@ -19,14 +35,16 @@ func NewListTool(p CalendarProvider) *ListTool { return &ListTool{p: p} }
 // NewReadTool returns the calendar_read tool.
 func NewReadTool(p CalendarProvider) *ReadTool { return &ReadTool{p: p} }
 
-// NewCreateTool returns the calendar_create tool.
-func NewCreateTool(p CalendarProvider) *CreateTool { return &CreateTool{p: p} }
+// NewCreateTool returns the calendar_create tool backed by the given approval store.
+func NewCreateTool(p CalendarProvider, store approval.Store) *CreateTool {
+	return &CreateTool{p: p, store: store}
+}
 
 // ── calendar_list ─────────────────────────────────────────────────────────────
 
 type listInput struct {
-	From string `json:"from"` // RFC3339 or "today"
-	To   string `json:"to"`   // RFC3339 or "today"
+	From string `json:"from"`
+	To   string `json:"to"`
 }
 
 // ListTool implements the calendar_list tool.
@@ -61,7 +79,6 @@ func (t *ListTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 	if in.From == "" || in.To == "" {
 		return "", fmt.Errorf("calendar_list: from and to are required")
 	}
-
 	from, err := parseTimeInput(in.From, false)
 	if err != nil {
 		return "", fmt.Errorf("calendar_list: invalid from: %w", err)
@@ -70,7 +87,6 @@ func (t *ListTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 	if err != nil {
 		return "", fmt.Errorf("calendar_list: invalid to: %w", err)
 	}
-
 	events, err := t.p.List(ctx, from, to)
 	if err != nil {
 		return "", fmt.Errorf("calendar_list: %w", err)
@@ -113,7 +129,6 @@ func (t *ReadTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 	if in.ID == "" {
 		return "", fmt.Errorf("calendar_read: id is required")
 	}
-
 	event, err := t.p.Read(ctx, in.ID)
 	if err != nil {
 		return "", fmt.Errorf("calendar_read: %w", err)
@@ -125,34 +140,31 @@ func (t *ReadTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 // ── calendar_create ───────────────────────────────────────────────────────────
 
 type createInput struct {
-	// Approved must be explicitly set to true by the caller. Any other value
-	// causes the tool to return ErrApprovalRequired without touching the provider.
-	Approved    bool     `json:"approved"`
 	Title       string   `json:"title"`
 	Description string   `json:"description,omitempty"`
 	Location    string   `json:"location,omitempty"`
-	Start       string   `json:"start"` // RFC3339
-	End         string   `json:"end"`   // RFC3339
+	Start       string   `json:"start"`
+	End         string   `json:"end"`
 	Attendees   []string `json:"attendees,omitempty"`
 	AllDay      bool     `json:"all_day,omitempty"`
 }
 
-// CreateTool implements the calendar_create tool.
-type CreateTool struct{ p CalendarProvider }
+// CreateTool implements the calendar_create tool with an ApprovalStore gate.
+type CreateTool struct {
+	p     CalendarProvider
+	store approval.Store
+}
 
 func (t *CreateTool) Definition() costguard.ToolDefinition {
 	return costguard.ToolDefinition{
 		Name: "calendar_create",
 		Description: "Create a new calendar event. " +
-			"The 'approved' field MUST be set to true — the agent must confirm with the user before setting this. " +
-			"Without approval the tool returns an error and no event is created.",
+			"The first call registers the action and returns a pending_approval response — " +
+			"the agent must ask the user to confirm. Once the user confirms, call this tool " +
+			"again with identical parameters to execute the creation.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"approved": map[string]any{
-					"type":        "boolean",
-					"description": "Must be true. The agent must obtain explicit user confirmation before setting this.",
-				},
 				"title": map[string]any{
 					"type":        "string",
 					"description": "Event title.",
@@ -183,7 +195,7 @@ func (t *CreateTool) Definition() costguard.ToolDefinition {
 					"description": "Set to true for all-day events.",
 				},
 			},
-			"required": []string{"approved", "title", "start", "end"},
+			"required": []string{"title", "start", "end"},
 		},
 	}
 }
@@ -193,19 +205,12 @@ func (t *CreateTool) Execute(ctx context.Context, input json.RawMessage) (string
 	if err := json.Unmarshal(input, &in); err != nil {
 		return "", fmt.Errorf("calendar_create: invalid input: %w", err)
 	}
-
-	// Approval gate — checked before any field validation.
-	if !in.Approved {
-		return "", ErrApprovalRequired
-	}
-
 	if in.Title == "" {
 		return "", fmt.Errorf("calendar_create: title is required")
 	}
 	if in.Start == "" || in.End == "" {
 		return "", fmt.Errorf("calendar_create: start and end are required")
 	}
-
 	start, err := time.Parse(time.RFC3339, in.Start)
 	if err != nil {
 		return "", fmt.Errorf("calendar_create: invalid start time: %w", err)
@@ -217,6 +222,16 @@ func (t *CreateTool) Execute(ctx context.Context, input json.RawMessage) (string
 	if !end.After(start) {
 		return "", fmt.Errorf("calendar_create: end must be after start")
 	}
+
+	sessionID := approval.SessionIDFromContext(ctx)
+	actionID := approval.ActionID("calendar_create", in.Title, in.Start, in.End, in.Location)
+	desc := fmt.Sprintf("Create calendar event '%s' on %s", in.Title, start.Format("2 Jan 2006 15:04"))
+
+	if !t.store.Approved(sessionID, actionID) {
+		t.store.Pend(sessionID, actionID, desc)
+		return pendingJSON(actionID, desc), nil
+	}
+	t.store.Consume(sessionID, actionID)
 
 	event, err := t.p.Create(ctx, CreateEventInput{
 		Title:       in.Title,
@@ -236,8 +251,6 @@ func (t *CreateTool) Execute(ctx context.Context, input json.RawMessage) (string
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-// parseTimeInput parses a time string that is either RFC3339 or the special
-// value "today". endOfDay controls whether "today" resolves to 00:00 or 23:59.
 func parseTimeInput(s string, endOfDay bool) (time.Time, error) {
 	if s == "today" {
 		now := time.Now()

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/marcoantonios1/Agent-OS/internal/approval"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/calendar"
 )
 
@@ -18,7 +19,9 @@ type mockProvider struct {
 	listErr     error
 	readErr     error
 	createErr   error
+	updateErr   error
 	createCalls []calendar.CreateEventInput
+	updateCalls []calendar.UpdateEventInput
 }
 
 func (m *mockProvider) List(_ context.Context, from, to time.Time) ([]calendar.Event, error) {
@@ -51,14 +54,21 @@ func (m *mockProvider) Create(_ context.Context, input calendar.CreateEventInput
 	}
 	m.createCalls = append(m.createCalls, input)
 	return &calendar.Event{
-		ID:          "new-event-id",
-		Title:       input.Title,
-		Description: input.Description,
-		Location:    input.Location,
-		Start:       input.Start,
-		End:         input.End,
-		Attendees:   input.Attendees,
+		ID:        "new-event-id",
+		Title:     input.Title,
+		Location:  input.Location,
+		Start:     input.Start,
+		End:       input.End,
+		Attendees: input.Attendees,
 	}, nil
+}
+
+func (m *mockProvider) Update(_ context.Context, input calendar.UpdateEventInput) (*calendar.Event, error) {
+	if m.updateErr != nil {
+		return nil, m.updateErr
+	}
+	m.updateCalls = append(m.updateCalls, input)
+	return &calendar.Event{ID: input.EventID, Title: input.Title}, nil
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -93,34 +103,25 @@ func fixedDay(hour int) time.Time {
 
 func sampleEvents() []calendar.Event {
 	return []calendar.Event{
-		{
-			ID:        "evt-1",
-			Title:     "Team standup",
-			Start:     fixedDay(9),
-			End:       fixedDay(10),
-			Attendees: []string{"alice@example.com", "marco_antonios1@outlook.com"},
-		},
-		{
-			ID:    "evt-2",
-			Title: "Lunch with Bob",
-			Start: fixedDay(12),
-			End:   fixedDay(13),
-		},
-		{
-			ID:    "evt-3",
-			Title: "Tomorrow's event",
-			Start: fixedDay(24), // next day — should not appear in same-day list
-			End:   fixedDay(25),
-		},
+		{ID: "evt-1", Title: "Team standup", Start: fixedDay(9), End: fixedDay(10),
+			Attendees: []string{"alice@example.com", "marco_antonios1@outlook.com"}},
+		{ID: "evt-2", Title: "Lunch with Bob", Start: fixedDay(12), End: fixedDay(13)},
+		{ID: "evt-3", Title: "Tomorrow's event", Start: fixedDay(24), End: fixedDay(25)},
 	}
+}
+
+// grantedCtx returns a ctx with sessionID, and pre-grants actionID in store.
+func grantedCtx(store approval.Store, sessionID, actionID string) context.Context {
+	store.Pend(sessionID, actionID, "test")
+	store.Grant(sessionID, actionID)
+	return approval.WithSessionID(context.Background(), sessionID)
 }
 
 // ── calendar_list ─────────────────────────────────────────────────────────────
 
 func TestListTool_Definition(t *testing.T) {
-	def := calendar.NewListTool(&mockProvider{}).Definition()
-	if def.Name != "calendar_list" {
-		t.Errorf("name = %q", def.Name)
+	if calendar.NewListTool(&mockProvider{}).Definition().Name != "calendar_list" {
+		t.Error("wrong name")
 	}
 }
 
@@ -133,38 +134,31 @@ func TestListTool_ReturnsEventsInRange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	items := decodeSlice(t, result)
-	if len(items) != 2 {
-		t.Errorf("got %d events, want 2 (events within the day)", len(items))
+	if items := decodeSlice(t, result); len(items) != 2 {
+		t.Errorf("got %d events, want 2", len(items))
 	}
 }
 
 func TestListTool_TodayShorthand(t *testing.T) {
-	p := &mockProvider{events: []calendar.Event{}}
-	_, err := calendar.NewListTool(p).Execute(context.Background(), mustMarshal(t, map[string]string{
-		"from": "today",
-		"to":   "today",
+	_, err := calendar.NewListTool(&mockProvider{}).Execute(context.Background(), mustMarshal(t, map[string]string{
+		"from": "today", "to": "today",
 	}))
 	if err != nil {
-		t.Errorf("'today' shorthand should be accepted, got: %v", err)
+		t.Errorf("'today' shorthand rejected: %v", err)
 	}
 }
 
 func TestListTool_MissingFrom(t *testing.T) {
-	p := &mockProvider{}
-	_, err := calendar.NewListTool(p).Execute(context.Background(), mustMarshal(t, map[string]string{
-		"to": fixedDay(24).Format(time.RFC3339),
-	}))
+	_, err := calendar.NewListTool(&mockProvider{}).Execute(context.Background(),
+		mustMarshal(t, map[string]string{"to": fixedDay(24).Format(time.RFC3339)}))
 	if err == nil {
 		t.Fatal("expected error for missing from")
 	}
 }
 
 func TestListTool_MissingTo(t *testing.T) {
-	p := &mockProvider{}
-	_, err := calendar.NewListTool(p).Execute(context.Background(), mustMarshal(t, map[string]string{
-		"from": fixedDay(0).Format(time.RFC3339),
-	}))
+	_, err := calendar.NewListTool(&mockProvider{}).Execute(context.Background(),
+		mustMarshal(t, map[string]string{"from": fixedDay(0).Format(time.RFC3339)}))
 	if err == nil {
 		t.Fatal("expected error for missing to")
 	}
@@ -178,37 +172,35 @@ func TestListTool_InvalidJSON(t *testing.T) {
 }
 
 func TestListTool_ProviderError(t *testing.T) {
-	p := &mockProvider{listErr: errors.New("calendar unavailable")}
-	_, err := calendar.NewListTool(p).Execute(context.Background(), mustMarshal(t, map[string]string{
-		"from": fixedDay(0).Format(time.RFC3339),
-		"to":   fixedDay(24).Format(time.RFC3339),
-	}))
+	_, err := calendar.NewListTool(&mockProvider{listErr: errors.New("down")}).Execute(
+		context.Background(), mustMarshal(t, map[string]string{
+			"from": fixedDay(0).Format(time.RFC3339),
+			"to":   fixedDay(24).Format(time.RFC3339),
+		}))
 	if err == nil {
-		t.Fatal("expected error from provider")
+		t.Fatal("expected provider error")
 	}
 }
 
 func TestListTool_EmptyRange(t *testing.T) {
-	p := &mockProvider{events: sampleEvents()}
-	result, err := calendar.NewListTool(p).Execute(context.Background(), mustMarshal(t, map[string]string{
-		"from": fixedDay(20).Format(time.RFC3339),
-		"to":   fixedDay(24).Format(time.RFC3339),
-	}))
+	result, err := calendar.NewListTool(&mockProvider{events: sampleEvents()}).Execute(
+		context.Background(), mustMarshal(t, map[string]string{
+			"from": fixedDay(20).Format(time.RFC3339),
+			"to":   fixedDay(24).Format(time.RFC3339),
+		}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	items := decodeSlice(t, result)
-	if len(items) != 0 {
-		t.Errorf("got %d events, want 0 for empty range", len(items))
+	if items := decodeSlice(t, result); len(items) != 0 {
+		t.Errorf("got %d events, want 0", len(items))
 	}
 }
 
 // ── calendar_read ─────────────────────────────────────────────────────────────
 
 func TestReadTool_Definition(t *testing.T) {
-	def := calendar.NewReadTool(&mockProvider{}).Definition()
-	if def.Name != "calendar_read" {
-		t.Errorf("name = %q", def.Name)
+	if calendar.NewReadTool(&mockProvider{}).Definition().Name != "calendar_read" {
+		t.Error("wrong name")
 	}
 }
 
@@ -221,11 +213,8 @@ func TestReadTool_ReturnsEvent(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	m := decodeMap(t, result)
-	if m["id"] != "evt-1" {
-		t.Errorf("got id %v, want evt-1", m["id"])
-	}
-	if m["title"] != "Team standup" {
-		t.Errorf("got title %v", m["title"])
+	if m["id"] != "evt-1" || m["title"] != "Team standup" {
+		t.Errorf("unexpected event: %v", m)
 	}
 }
 
@@ -258,63 +247,71 @@ func TestReadTool_ProviderError(t *testing.T) {
 // ── calendar_create ───────────────────────────────────────────────────────────
 
 func TestCreateTool_Definition(t *testing.T) {
-	def := calendar.NewCreateTool(&mockProvider{}).Definition()
-	if def.Name != "calendar_create" {
-		t.Errorf("name = %q", def.Name)
+	if calendar.NewCreateTool(&mockProvider{}, approval.NewMemoryStore()).Definition().Name != "calendar_create" {
+		t.Error("wrong name")
 	}
 }
 
-func validCreateInput(approved bool) map[string]any {
-	return map[string]any{
-		"approved": approved,
-		"title":    "Team sync",
-		"start":    fixedDay(14).Format(time.RFC3339),
-		"end":      fixedDay(15).Format(time.RFC3339),
-	}
-}
-
-func TestCreateTool_BlockedWithoutApproval(t *testing.T) {
+func TestCreateTool_ReturnsPendingWithoutApproval(t *testing.T) {
+	store := approval.NewMemoryStore()
 	p := &mockProvider{}
-	_, err := calendar.NewCreateTool(p).Execute(context.Background(),
-		mustMarshal(t, validCreateInput(false)))
-	if err == nil {
-		t.Fatal("expected approval error, got nil")
-	}
-	if !errors.Is(err, calendar.ErrApprovalRequired) {
-		t.Errorf("got %v, want ErrApprovalRequired", err)
-	}
-	if len(p.createCalls) != 0 {
-		t.Errorf("provider Create must not be called without approval, got %d call(s)", len(p.createCalls))
-	}
-}
-
-func TestCreateTool_BlockedWhenApprovedMissing(t *testing.T) {
-	// approved field not included at all (defaults to false)
-	p := &mockProvider{}
-	input := map[string]any{
-		"title": "Sneaky event",
+	ctx := approval.WithSessionID(context.Background(), "sess")
+	result, err := calendar.NewCreateTool(p, store).Execute(ctx, mustMarshal(t, map[string]any{
+		"title": "Team sync",
 		"start": fixedDay(14).Format(time.RFC3339),
 		"end":   fixedDay(15).Format(time.RFC3339),
-	}
-	_, err := calendar.NewCreateTool(p).Execute(context.Background(), mustMarshal(t, input))
-	if err == nil {
-		t.Fatal("expected approval error when approved field is absent")
-	}
-	if len(p.createCalls) != 0 {
-		t.Errorf("provider must not be called, got %d call(s)", len(p.createCalls))
-	}
-}
-
-func TestCreateTool_CreatesWithApproval(t *testing.T) {
-	p := &mockProvider{}
-	result, err := calendar.NewCreateTool(p).Execute(context.Background(),
-		mustMarshal(t, validCreateInput(true)))
+	}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	m := decodeMap(t, result)
-	if m["title"] != "Team sync" {
-		t.Errorf("got title %v", m["title"])
+	if m["status"] != "pending_approval" {
+		t.Errorf("expected pending_approval, got %v", m["status"])
+	}
+	if m["action_id"] == "" {
+		t.Error("expected non-empty action_id")
+	}
+	if len(p.createCalls) != 0 {
+		t.Errorf("provider must not be called without approval")
+	}
+}
+
+func TestCreateTool_ActionIDIsDeterministic(t *testing.T) {
+	store := approval.NewMemoryStore()
+	p := &mockProvider{}
+	ctx := approval.WithSessionID(context.Background(), "sess-det")
+	input := mustMarshal(t, map[string]any{
+		"title": "Team sync",
+		"start": fixedDay(14).Format(time.RFC3339),
+		"end":   fixedDay(15).Format(time.RFC3339),
+	})
+	r1, _ := calendar.NewCreateTool(p, store).Execute(ctx, input)
+	r2, _ := calendar.NewCreateTool(p, store).Execute(ctx, input)
+	if decodeMap(t, r1)["action_id"] != decodeMap(t, r2)["action_id"] {
+		t.Error("action_id must be deterministic across identical inputs")
+	}
+}
+
+func TestCreateTool_CreatesAfterApproval(t *testing.T) {
+	store := approval.NewMemoryStore()
+	p := &mockProvider{}
+	const sess = "sess-approved"
+	input := mustMarshal(t, map[string]any{
+		"title": "Team sync",
+		"start": fixedDay(14).Format(time.RFC3339),
+		"end":   fixedDay(15).Format(time.RFC3339),
+	})
+	ctx := approval.WithSessionID(context.Background(), sess)
+
+	r, _ := calendar.NewCreateTool(p, store).Execute(ctx, input)
+	store.Grant(sess, decodeMap(t, r)["action_id"].(string))
+
+	result, err := calendar.NewCreateTool(p, store).Execute(ctx, input)
+	if err != nil {
+		t.Fatalf("unexpected error after approval: %v", err)
+	}
+	if decodeMap(t, result)["title"] != "Team sync" {
+		t.Error("wrong title in created event")
 	}
 	if len(p.createCalls) != 1 {
 		t.Errorf("expected 1 provider call, got %d", len(p.createCalls))
@@ -322,22 +319,27 @@ func TestCreateTool_CreatesWithApproval(t *testing.T) {
 }
 
 func TestCreateTool_WithAttendeesAndLocation(t *testing.T) {
+	store := approval.NewMemoryStore()
 	p := &mockProvider{}
-	input := map[string]any{
-		"approved":  true,
+	const sess = "sess-attendees"
+	input := mustMarshal(t, map[string]any{
 		"title":     "Product review",
 		"start":     fixedDay(10).Format(time.RFC3339),
 		"end":       fixedDay(11).Format(time.RFC3339),
 		"location":  "Conference room A",
 		"attendees": []string{"alice@example.com", "bob@example.com"},
-	}
-	result, err := calendar.NewCreateTool(p).Execute(context.Background(), mustMarshal(t, input))
+	})
+	ctx := approval.WithSessionID(context.Background(), sess)
+
+	r, _ := calendar.NewCreateTool(p, store).Execute(ctx, input)
+	store.Grant(sess, decodeMap(t, r)["action_id"].(string))
+
+	result, err := calendar.NewCreateTool(p, store).Execute(ctx, input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	m := decodeMap(t, result)
-	if m["location"] != "Conference room A" {
-		t.Errorf("location not preserved: %v", m["location"])
+	if decodeMap(t, result)["location"] != "Conference room A" {
+		t.Error("location not preserved")
 	}
 	if p.createCalls[0].Attendees[0] != "alice@example.com" {
 		t.Errorf("attendees not preserved: %v", p.createCalls[0].Attendees)
@@ -345,50 +347,61 @@ func TestCreateTool_WithAttendeesAndLocation(t *testing.T) {
 }
 
 func TestCreateTool_MissingTitle(t *testing.T) {
-	p := &mockProvider{}
-	input := map[string]any{
-		"approved": true,
-		"start":    fixedDay(10).Format(time.RFC3339),
-		"end":      fixedDay(11).Format(time.RFC3339),
-	}
-	_, err := calendar.NewCreateTool(p).Execute(context.Background(), mustMarshal(t, input))
+	store := approval.NewMemoryStore()
+	_, err := calendar.NewCreateTool(&mockProvider{}, store).Execute(
+		approval.WithSessionID(context.Background(), "sess"),
+		mustMarshal(t, map[string]any{
+			"start": fixedDay(10).Format(time.RFC3339),
+			"end":   fixedDay(11).Format(time.RFC3339),
+		}))
 	if err == nil {
 		t.Fatal("expected error for missing title")
 	}
 }
 
 func TestCreateTool_EndBeforeStart(t *testing.T) {
-	p := &mockProvider{}
-	input := map[string]any{
-		"approved": true,
-		"title":    "Bad event",
-		"start":    fixedDay(11).Format(time.RFC3339),
-		"end":      fixedDay(10).Format(time.RFC3339), // end before start
-	}
-	_, err := calendar.NewCreateTool(p).Execute(context.Background(), mustMarshal(t, input))
+	store := approval.NewMemoryStore()
+	_, err := calendar.NewCreateTool(&mockProvider{}, store).Execute(
+		approval.WithSessionID(context.Background(), "sess"),
+		mustMarshal(t, map[string]any{
+			"title": "Bad event",
+			"start": fixedDay(11).Format(time.RFC3339),
+			"end":   fixedDay(10).Format(time.RFC3339),
+		}))
 	if err == nil {
 		t.Fatal("expected error for end before start")
 	}
 }
 
 func TestCreateTool_InvalidStartFormat(t *testing.T) {
-	p := &mockProvider{}
-	input := map[string]any{
-		"approved": true,
-		"title":    "Bad times",
-		"start":    "not-a-time",
-		"end":      fixedDay(11).Format(time.RFC3339),
-	}
-	_, err := calendar.NewCreateTool(p).Execute(context.Background(), mustMarshal(t, input))
+	store := approval.NewMemoryStore()
+	_, err := calendar.NewCreateTool(&mockProvider{}, store).Execute(
+		approval.WithSessionID(context.Background(), "sess"),
+		mustMarshal(t, map[string]any{
+			"title": "Bad times",
+			"start": "not-a-time",
+			"end":   fixedDay(11).Format(time.RFC3339),
+		}))
 	if err == nil {
 		t.Fatal("expected error for invalid start format")
 	}
 }
 
 func TestCreateTool_ProviderError(t *testing.T) {
+	store := approval.NewMemoryStore()
 	p := &mockProvider{createErr: errors.New("calendar write failed")}
-	_, err := calendar.NewCreateTool(p).Execute(context.Background(),
-		mustMarshal(t, validCreateInput(true)))
+	const sess = "sess-err"
+	input := mustMarshal(t, map[string]any{
+		"title": "Team sync",
+		"start": fixedDay(14).Format(time.RFC3339),
+		"end":   fixedDay(15).Format(time.RFC3339),
+	})
+	ctx := approval.WithSessionID(context.Background(), sess)
+
+	r, _ := calendar.NewCreateTool(p, store).Execute(ctx, input)
+	store.Grant(sess, decodeMap(t, r)["action_id"].(string))
+
+	_, err := calendar.NewCreateTool(p, store).Execute(ctx, input)
 	if err == nil {
 		t.Fatal("expected provider error")
 	}

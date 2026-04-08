@@ -121,6 +121,27 @@ func (p *Provider) Search(ctx context.Context, query string) ([]email.EmailSumma
 	return summaries, nil
 }
 
+// Send delivers an email immediately via the Graph API sendMail endpoint.
+func (p *Provider) Send(ctx context.Context, to, subject, body string) error {
+	payload := map[string]any{
+		"message": map[string]any{
+			"subject": subject,
+			"body": map[string]string{
+				"contentType": "Text",
+				"content":     body,
+			},
+			"toRecipients": []map[string]any{
+				{"emailAddress": map[string]string{"address": to}},
+			},
+		},
+		"saveToSentItems": true,
+	}
+	if err := p.post(ctx, graphBase+"/sendMail", payload); err != nil {
+		return fmt.Errorf("outlook send: %w", err)
+	}
+	return nil
+}
+
 // Draft saves a draft in Outlook. It does not send the email.
 func (p *Provider) Draft(ctx context.Context, to, subject, body string) (*email.Draft, error) {
 	payload := map[string]any{
