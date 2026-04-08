@@ -282,3 +282,102 @@ func TestRoute_AgentReceivesFullHistory(t *testing.T) {
 		t.Errorf("h[2] = %+v", h[2])
 	}
 }
+
+// --- approval gate tests ---
+
+func TestRoute_ConfirmKeyword_GrantsPendingApprovals(t *testing.T) {
+	approvals := approval.NewMemoryStore()
+	store := memory.NewStore()
+	agent := &stubAgent{output: "done"}
+
+	r := New(
+		&stubClassifier{intent: IntentComms},
+		map[Intent]Agent{IntentComms: agent},
+		store,
+		approvals,
+	)
+
+	const sess = "sess-approval"
+	const actionID = "act-abc123"
+
+	// Register a pending action for this session.
+	approvals.Pend(sess, actionID, "Send email to alice@example.com")
+
+	// User sends a confirmation keyword.
+	_, err := r.Route(context.Background(), newMsg(sess, "user-1", "confirm"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The pending action must now be approved.
+	if !approvals.Approved(sess, actionID) {
+		t.Error("pending action should be approved after user says 'confirm'")
+	}
+}
+
+func TestRoute_NonConfirmMessage_DoesNotGrantApprovals(t *testing.T) {
+	approvals := approval.NewMemoryStore()
+	store := memory.NewStore()
+	agent := &stubAgent{output: "ok"}
+
+	r := New(
+		&stubClassifier{intent: IntentComms},
+		map[Intent]Agent{IntentComms: agent},
+		store,
+		approvals,
+	)
+
+	const sess = "sess-no-approval"
+	approvals.Pend(sess, "act-1", "Send email to bob@example.com")
+
+	// Normal message — should not grant anything.
+	_, err := r.Route(context.Background(), newMsg(sess, "user-1", "what's the weather?"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if approvals.Approved(sess, "act-1") {
+		t.Error("non-confirmation message must not grant pending approvals")
+	}
+}
+
+func TestRoute_SessionIDInjectedIntoContext(t *testing.T) {
+	approvals := approval.NewMemoryStore()
+	store := memory.NewStore()
+
+	var capturedCtx context.Context
+	agent := &stubAgent{}
+	agent.output = "ok"
+
+	// Wrap the agent to capture the context it receives.
+	type ctxCaptureAgent struct{ inner *stubAgent }
+	capturer := &ctxCaptureAgent{inner: agent}
+	_ = capturer
+
+	r := New(
+		&stubClassifier{intent: IntentComms},
+		map[Intent]Agent{IntentComms: &ctxCapturingAgent{output: "ok", ctxOut: &capturedCtx}},
+		store,
+		approvals,
+	)
+
+	_, err := r.Route(context.Background(), newMsg("sess-ctx", "user-1", "hello"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if approval.SessionIDFromContext(capturedCtx) != "sess-ctx" {
+		t.Errorf("session ID not injected into context, got %q",
+			approval.SessionIDFromContext(capturedCtx))
+	}
+}
+
+type ctxCapturingAgent struct {
+	output string
+	ctxOut *context.Context
+}
+
+func (a *ctxCapturingAgent) Handle(ctx context.Context, _ types.AgentRequest) (types.AgentResponse, error) {
+	*a.ctxOut = ctx
+	return types.AgentResponse{AgentID: "capture", Output: a.output}, nil
+}
