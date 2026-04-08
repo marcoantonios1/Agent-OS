@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/marcoantonios1/Agent-OS/internal/approval"
 	"github.com/marcoantonios1/Agent-OS/internal/memory"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
@@ -55,6 +56,7 @@ func newRouter(intent Intent, agentOutput string) (*Router, *stubAgent, *memory.
 		&stubClassifier{intent: intent},
 		map[Intent]Agent{intent: agent},
 		store,
+		approval.NewMemoryStore(),
 	)
 	return r, agent, store
 }
@@ -114,6 +116,8 @@ func TestRoute_UnknownIntent_ReturnsHelpfulMessage(t *testing.T) {
 		&stubClassifier{intent: IntentUnknown},
 		map[Intent]Agent{},
 		store,
+	
+		approval.NewMemoryStore(),
 	)
 	out, err := r.Route(context.Background(), newMsg("sess-4", "user-4", "🤔"))
 	if err != nil {
@@ -134,6 +138,8 @@ func TestRoute_UnregisteredIntent_ReturnsHelpfulMessage(t *testing.T) {
 		&stubClassifier{intent: IntentBuilder},
 		map[Intent]Agent{},
 		store,
+	
+		approval.NewMemoryStore(),
 	)
 	out, err := r.Route(context.Background(), newMsg("sess-5", "user-5", "help"))
 	if err != nil {
@@ -150,6 +156,8 @@ func TestRoute_ClassifierError_FallsBackToUnknown(t *testing.T) {
 		&stubClassifier{intent: IntentUnknown, err: errors.New("LLM unavailable")},
 		map[Intent]Agent{},
 		store,
+	
+		approval.NewMemoryStore(),
 	)
 	// Should not return an error — classifier failures are non-fatal.
 	out, err := r.Route(context.Background(), newMsg("sess-6", "user-6", "hello"))
@@ -168,6 +176,8 @@ func TestRoute_AgentError_PropagatesError(t *testing.T) {
 		&stubClassifier{intent: IntentComms},
 		map[Intent]Agent{IntentComms: agent},
 		store,
+	
+		approval.NewMemoryStore(),
 	)
 	_, err := r.Route(context.Background(), newMsg("sess-7", "user-7", "hi"))
 	if err == nil {
@@ -271,4 +281,103 @@ func TestRoute_AgentReceivesFullHistory(t *testing.T) {
 	if h[2].Content != "second" || h[2].Role != "user" {
 		t.Errorf("h[2] = %+v", h[2])
 	}
+}
+
+// --- approval gate tests ---
+
+func TestRoute_ConfirmKeyword_GrantsPendingApprovals(t *testing.T) {
+	approvals := approval.NewMemoryStore()
+	store := memory.NewStore()
+	agent := &stubAgent{output: "done"}
+
+	r := New(
+		&stubClassifier{intent: IntentComms},
+		map[Intent]Agent{IntentComms: agent},
+		store,
+		approvals,
+	)
+
+	const sess = "sess-approval"
+	const actionID = "act-abc123"
+
+	// Register a pending action for this session.
+	approvals.Pend(sess, actionID, "Send email to alice@example.com")
+
+	// User sends a confirmation keyword.
+	_, err := r.Route(context.Background(), newMsg(sess, "user-1", "confirm"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// The pending action must now be approved.
+	if !approvals.Approved(sess, actionID) {
+		t.Error("pending action should be approved after user says 'confirm'")
+	}
+}
+
+func TestRoute_NonConfirmMessage_DoesNotGrantApprovals(t *testing.T) {
+	approvals := approval.NewMemoryStore()
+	store := memory.NewStore()
+	agent := &stubAgent{output: "ok"}
+
+	r := New(
+		&stubClassifier{intent: IntentComms},
+		map[Intent]Agent{IntentComms: agent},
+		store,
+		approvals,
+	)
+
+	const sess = "sess-no-approval"
+	approvals.Pend(sess, "act-1", "Send email to bob@example.com")
+
+	// Normal message — should not grant anything.
+	_, err := r.Route(context.Background(), newMsg(sess, "user-1", "what's the weather?"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if approvals.Approved(sess, "act-1") {
+		t.Error("non-confirmation message must not grant pending approvals")
+	}
+}
+
+func TestRoute_SessionIDInjectedIntoContext(t *testing.T) {
+	approvals := approval.NewMemoryStore()
+	store := memory.NewStore()
+
+	var capturedCtx context.Context
+	agent := &stubAgent{}
+	agent.output = "ok"
+
+	// Wrap the agent to capture the context it receives.
+	type ctxCaptureAgent struct{ inner *stubAgent }
+	capturer := &ctxCaptureAgent{inner: agent}
+	_ = capturer
+
+	r := New(
+		&stubClassifier{intent: IntentComms},
+		map[Intent]Agent{IntentComms: &ctxCapturingAgent{output: "ok", ctxOut: &capturedCtx}},
+		store,
+		approvals,
+	)
+
+	_, err := r.Route(context.Background(), newMsg("sess-ctx", "user-1", "hello"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if approval.SessionIDFromContext(capturedCtx) != "sess-ctx" {
+		t.Errorf("session ID not injected into context, got %q",
+			approval.SessionIDFromContext(capturedCtx))
+	}
+}
+
+type ctxCapturingAgent struct {
+	output string
+	ctxOut *context.Context
+}
+
+func (a *ctxCapturingAgent) Handle(ctx context.Context, _ types.AgentRequest) (types.AgentResponse, error) {
+	*a.ctxOut = ctx
+	return types.AgentResponse{AgentID: "capture", Output: a.output}, nil
 }

@@ -45,4 +45,7 @@ type EmailProvider interface {
 	Search(ctx context.Context, query string) ([]EmailSummary, error)
 	// Draft composes an email and returns it as a Draft. It must not send.
 	Draft(ctx context.Context, to, subject, body string) (*Draft, error)
+	// Send delivers an email immediately. The tool layer enforces the approval
+	// gate before this is ever called.
+	Send(ctx context.Context, to, subject, body string) error
 }

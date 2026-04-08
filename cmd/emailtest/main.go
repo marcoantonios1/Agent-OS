@@ -125,6 +125,11 @@ func (s *stubProvider) Draft(_ context.Context, to, subject, body string) (*emai
 	return &email.Draft{To: to, Subject: subject, Body: body}, nil
 }
 
+func (s *stubProvider) Send(_ context.Context, to, subject, body string) error {
+	// Stub: pretend the email was sent.
+	return nil
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr ||
 		len(substr) == 0 ||

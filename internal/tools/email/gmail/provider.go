@@ -144,6 +144,17 @@ func (p *Provider) Search(ctx context.Context, query string) ([]email.EmailSumma
 	return summaries, nil
 }
 
+// Send delivers an email immediately via the Gmail API.
+func (p *Provider) Send(ctx context.Context, to, subject, body string) error {
+	raw := buildRawMessage("me", to, subject, body)
+	encoded := base64.URLEncoding.EncodeToString([]byte(raw))
+	_, err := p.svc.Users.Messages.Send(gmailUser, &googlemail.Message{Raw: encoded}).Context(ctx).Do()
+	if err != nil {
+		return fmt.Errorf("gmail send: %w", err)
+	}
+	return nil
+}
+
 // Draft saves a draft in Gmail. It does not send the email.
 func (p *Provider) Draft(ctx context.Context, to, subject, body string) (*email.Draft, error) {
 	raw := buildRawMessage("me", to, subject, body)

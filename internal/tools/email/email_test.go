@@ -60,6 +60,8 @@ func (m *mockProvider) Draft(_ context.Context, to, subject, body string) (*emai
 	return &email.Draft{To: to, Subject: subject, Body: body}, nil
 }
 
+func (m *mockProvider) Send(_ context.Context, _, _, _ string) error { return nil }
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func fixedTime() time.Time { return time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC) }

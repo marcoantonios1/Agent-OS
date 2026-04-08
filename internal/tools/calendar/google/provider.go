@@ -129,6 +129,35 @@ func (p *Provider) Create(ctx context.Context, input calendar.CreateEventInput) 
 	return &e, nil
 }
 
+// Update applies a partial update to an existing event on the primary calendar.
+func (p *Provider) Update(ctx context.Context, input calendar.UpdateEventInput) (*calendar.Event, error) {
+	existing, err := p.svc.Events.Get(calendarID, input.EventID).Context(ctx).Do()
+	if err != nil {
+		return nil, fmt.Errorf("google calendar update (get) %s: %w", input.EventID, err)
+	}
+	if input.Title != "" {
+		existing.Summary = input.Title
+	}
+	if input.Description != "" {
+		existing.Description = input.Description
+	}
+	if input.Location != "" {
+		existing.Location = input.Location
+	}
+	if !input.Start.IsZero() {
+		existing.Start = &googlecal.EventDateTime{DateTime: input.Start.Format(time.RFC3339)}
+	}
+	if !input.End.IsZero() {
+		existing.End = &googlecal.EventDateTime{DateTime: input.End.Format(time.RFC3339)}
+	}
+	updated, err := p.svc.Events.Update(calendarID, input.EventID, existing).Context(ctx).Do()
+	if err != nil {
+		return nil, fmt.Errorf("google calendar update %s: %w", input.EventID, err)
+	}
+	e := toEvent(updated)
+	return &e, nil
+}
+
 // ── conversion helpers ────────────────────────────────────────────────────────
 
 func toEvent(item *googlecal.Event) calendar.Event {

@@ -16,6 +16,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/marcoantonios1/Agent-OS/internal/approval"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/calendar"
 	googlecal "github.com/marcoantonios1/Agent-OS/internal/tools/calendar/google"
 	outlookcal "github.com/marcoantonios1/Agent-OS/internal/tools/calendar/outlook"
@@ -102,6 +103,30 @@ func (s *stubProvider) Create(_ context.Context, input calendar.CreateEventInput
 	return &e, nil
 }
 
+func (s *stubProvider) Update(_ context.Context, input calendar.UpdateEventInput) (*calendar.Event, error) {
+	e, ok := s.events[input.EventID]
+	if !ok {
+		return nil, fmt.Errorf("event %q not found", input.EventID)
+	}
+	if input.Title != "" {
+		e.Title = input.Title
+	}
+	if input.Description != "" {
+		e.Description = input.Description
+	}
+	if input.Location != "" {
+		e.Location = input.Location
+	}
+	if !input.Start.IsZero() {
+		e.Start = input.Start
+	}
+	if !input.End.IsZero() {
+		e.End = input.End
+	}
+	s.events[e.ID] = e
+	return &e, nil
+}
+
 // ── test runner ───────────────────────────────────────────────────────────────
 
 var pass, fail int
@@ -161,9 +186,13 @@ func main() {
 		}
 	}
 
+	approvalStore := approval.NewMemoryStore()
+	const testSession = "calendartest-session"
+	approvalCtx := approval.WithSessionID(ctx, testSession)
+
 	listTool := calendar.NewListTool(p)
 	readTool := calendar.NewReadTool(p)
-	createTool := calendar.NewCreateTool(p)
+	createTool := calendar.NewCreateTool(p, approvalStore)
 
 	now := time.Now().UTC()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
@@ -279,22 +308,37 @@ func main() {
 	// ── calendar_create ────────────────────────────────────────────────────────
 	section("calendar_create")
 
-	run("create without approval → expect ErrApprovalRequired", func() (string, error) {
-		out, err := createTool.Execute(ctx, mustJSON(map[string]any{
-			"approved": false,
-			"title":    "Sneaky meeting",
-			"start":    nextWeek.Add(10 * time.Hour).Format(time.RFC3339),
-			"end":      nextWeek.Add(11 * time.Hour).Format(time.RFC3339),
+	run("create without prior approval → returns pending_approval", func() (string, error) {
+		result, err := createTool.Execute(approvalCtx, mustJSON(map[string]any{
+			"title": "Sneaky meeting",
+			"start": nextWeek.Add(10 * time.Hour).Format(time.RFC3339),
+			"end":   nextWeek.Add(11 * time.Hour).Format(time.RFC3339),
+		}))
+		if err != nil {
+			return "", err
+		}
+		var resp map[string]any
+		json.Unmarshal([]byte(result), &resp)
+		if resp["status"] != "pending_approval" {
+			return result, fmt.Errorf("expected status=pending_approval, got %v", resp["status"])
+		}
+		return fmt.Sprintf("[pending correctly returned — action_id: %v]", resp["action_id"]), nil
+	})
+
+	run("create with end before start → expect error", func() (string, error) {
+		out, err := createTool.Execute(approvalCtx, mustJSON(map[string]any{
+			"title": "Bad times event",
+			"start": nextWeek.Add(11 * time.Hour).Format(time.RFC3339),
+			"end":   nextWeek.Add(10 * time.Hour).Format(time.RFC3339),
 		}))
 		if err != nil {
 			return fmt.Sprintf("[error correctly returned: %v]", err), nil
 		}
-		return out, fmt.Errorf("expected ErrApprovalRequired but got none")
+		return out, fmt.Errorf("expected error but got none")
 	})
 
-	run("create without 'approved' field → expect error", func() (string, error) {
-		out, err := createTool.Execute(ctx, mustJSON(map[string]any{
-			"title": "Sneaky meeting",
+	run("create with missing title → expect error", func() (string, error) {
+		out, err := createTool.Execute(approvalCtx, mustJSON(map[string]any{
 			"start": nextWeek.Add(10 * time.Hour).Format(time.RFC3339),
 			"end":   nextWeek.Add(11 * time.Hour).Format(time.RFC3339),
 		}))
@@ -304,44 +348,30 @@ func main() {
 		return out, fmt.Errorf("expected error but got none")
 	})
 
-	run("create with end before start → expect error", func() (string, error) {
-		out, err := createTool.Execute(ctx, mustJSON(map[string]any{
-			"approved": true,
-			"title":    "Bad times event",
-			"start":    nextWeek.Add(11 * time.Hour).Format(time.RFC3339),
-			"end":      nextWeek.Add(10 * time.Hour).Format(time.RFC3339),
-		}))
-		if err != nil {
-			return fmt.Sprintf("[error correctly returned: %v]", err), nil
-		}
-		return out, fmt.Errorf("expected error but got none")
-	})
-
-	run("create with missing title → expect error", func() (string, error) {
-		out, err := createTool.Execute(ctx, mustJSON(map[string]any{
-			"approved": true,
-			"start":    nextWeek.Add(10 * time.Hour).Format(time.RFC3339),
-			"end":      nextWeek.Add(11 * time.Hour).Format(time.RFC3339),
-		}))
-		if err != nil {
-			return fmt.Sprintf("[error correctly returned: %v]", err), nil
-		}
-		return out, fmt.Errorf("expected error but got none")
-	})
-
-	run("create valid event with approval (stub only — no live write)", func() (string, error) {
+	run("create proceeds after approval is granted (stub only)", func() (string, error) {
 		if mode != "stub" {
 			return "[skipped — live provider: no test events created]", nil
 		}
-		return createTool.Execute(ctx, mustJSON(map[string]any{
-			"approved":    true,
+		input := mustJSON(map[string]any{
 			"title":       "Test event from calendartest",
 			"description": "Created by the calendartest harness",
 			"location":    "Virtual",
 			"start":       nextWeek.Add(14 * time.Hour).Format(time.RFC3339),
 			"end":         nextWeek.Add(15 * time.Hour).Format(time.RFC3339),
 			"attendees":   []string{"alice@example.com"},
-		}))
+		})
+		// First call registers the pending action.
+		result, err := createTool.Execute(approvalCtx, input)
+		if err != nil {
+			return "", err
+		}
+		var pending map[string]any
+		json.Unmarshal([]byte(result), &pending)
+		actionID, _ := pending["action_id"].(string)
+		// Simulate user confirmation: grant the action.
+		approvalStore.Grant(testSession, actionID)
+		// Second call with identical params should now create the event.
+		return createTool.Execute(approvalCtx, input)
 	})
 
 	// ── summary ────────────────────────────────────────────────────────────────
