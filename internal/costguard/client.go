@@ -11,6 +11,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
 
 const (
@@ -18,7 +20,8 @@ const (
 	initialBackoff = 200 * time.Millisecond
 )
 
-// Client implements LLMClient by routing requests through the Costguard gateway.
+// Client implements LLMClient by routing requests through the Costguard gateway
+// using the OpenAI-compatible /v1/chat/completions endpoint.
 type Client struct {
 	baseURL    string
 	apiKey     string
@@ -46,36 +49,70 @@ func New(baseURL, apiKey string) *Client {
 	}
 }
 
-// apiRequest is the JSON body sent to the Costguard gateway.
-type apiRequest struct {
-	Model     string         `json:"model"`
-	Messages  []apiMessage   `json:"messages"`
-	Tools     []ToolDefinition `json:"tools,omitempty"`
-	MaxTokens int            `json:"max_tokens,omitempty"`
-	Stream    bool           `json:"stream,omitempty"`
+// ── OpenAI wire types ─────────────────────────────────────────────────────────
+
+type oaiRequest struct {
+	Model     string       `json:"model"`
+	Messages  []oaiMessage `json:"messages"`
+	Tools     []oaiTool    `json:"tools,omitempty"`
+	MaxTokens int          `json:"max_tokens,omitempty"`
+	Stream    bool         `json:"stream,omitempty"`
 }
 
-type apiMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+// oaiMessage uses a pointer for Content so assistant turns with only tool_calls
+// can set content to null (omitempty would hide a legitimate empty string).
+type oaiMessage struct {
+	Role       string        `json:"role"`
+	Content    *string       `json:"content"`
+	ToolCalls  []oaiToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string        `json:"tool_call_id,omitempty"`
 }
 
-// apiResponse is the JSON body returned for non-streaming requests.
-type apiResponse struct {
-	Content   string     `json:"content"`
-	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
-	Usage     struct {
+type oaiTool struct {
+	Type     string      `json:"type"`
+	Function oaiFunction `json:"function"`
+}
+
+type oaiFunction struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parameters"`
+}
+
+type oaiToolCall struct {
+	ID       string      `json:"id"`
+	Type     string      `json:"type"`
+	Function oaiFuncCall `json:"function"`
+}
+
+type oaiFuncCall struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+type oaiResponse struct {
+	Choices []struct {
+		Message oaiMessage `json:"message"`
+	} `json:"choices"`
+	Usage struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
 		TotalTokens      int `json:"total_tokens"`
 	} `json:"usage"`
 }
 
-// sseChunk is one JSON frame sent over an SSE stream.
-type sseChunk struct {
-	Content string `json:"content"`
-	Done    bool   `json:"done"`
+// oaiStreamDelta is one JSON frame in an OpenAI SSE stream.
+type oaiStreamDelta struct {
+	Choices []struct {
+		Delta struct {
+			Content   string        `json:"content"`
+			ToolCalls []oaiToolCall `json:"tool_calls"`
+		} `json:"delta"`
+		FinishReason string `json:"finish_reason"`
+	} `json:"choices"`
 }
+
+// ── Complete ──────────────────────────────────────────────────────────────────
 
 // Complete performs a single-shot completion with up to maxAttempts retries.
 func (c *Client) Complete(ctx context.Context, req CompletionRequest) (CompletionResponse, error) {
@@ -96,7 +133,7 @@ func (c *Client) Complete(ctx context.Context, req CompletionRequest) (Completio
 			}
 		}
 
-		resp, lastErr = c.doPost(ctx, "/v1/complete", body)
+		resp, lastErr = c.doPost(ctx, "/v1/chat/completions", body)
 		if lastErr == nil && !isRetryable(resp.StatusCode) {
 			break
 		}
@@ -116,9 +153,27 @@ func (c *Client) Complete(ctx context.Context, req CompletionRequest) (Completio
 		return CompletionResponse{}, fmt.Errorf("costguard: unexpected status %d", resp.StatusCode)
 	}
 
-	var apiResp apiResponse
+	var apiResp oaiResponse
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
 		return CompletionResponse{}, fmt.Errorf("costguard: decode response: %w", err)
+	}
+	if len(apiResp.Choices) == 0 {
+		return CompletionResponse{}, fmt.Errorf("costguard: response has no choices")
+	}
+
+	msg := apiResp.Choices[0].Message
+	content := ""
+	if msg.Content != nil {
+		content = *msg.Content
+	}
+
+	toolCalls := make([]types.ToolCall, len(msg.ToolCalls))
+	for i, tc := range msg.ToolCalls {
+		toolCalls[i] = types.ToolCall{
+			ID:        tc.ID,
+			Name:      tc.Function.Name,
+			Arguments: tc.Function.Arguments,
+		}
 	}
 
 	c.log.InfoContext(ctx, "completion done",
@@ -128,8 +183,8 @@ func (c *Client) Complete(ctx context.Context, req CompletionRequest) (Completio
 	)
 
 	return CompletionResponse{
-		Content:   apiResp.Content,
-		ToolCalls: apiResp.ToolCalls,
+		Content:   content,
+		ToolCalls: toolCalls,
 		Usage: Usage{
 			PromptTokens:     apiResp.Usage.PromptTokens,
 			CompletionTokens: apiResp.Usage.CompletionTokens,
@@ -138,12 +193,14 @@ func (c *Client) Complete(ctx context.Context, req CompletionRequest) (Completio
 	}, nil
 }
 
+// ── Stream ────────────────────────────────────────────────────────────────────
+
 // Stream performs a streaming completion and returns a channel of chunks.
 // The caller must drain the channel until it is closed.
 func (c *Client) Stream(ctx context.Context, req CompletionRequest) (<-chan StreamChunk, error) {
 	body := c.buildRequest(req, true)
 
-	resp, err := c.doPost(ctx, "/v1/stream", body)
+	resp, err := c.doPost(ctx, "/v1/chat/completions", body)
 	if err != nil {
 		return nil, fmt.Errorf("costguard: stream request: %w", err)
 	}
@@ -168,18 +225,23 @@ func (c *Client) Stream(ctx context.Context, req CompletionRequest) (<-chan Stre
 				ch <- StreamChunk{Done: true}
 				return
 			}
-			var chunk sseChunk
-			if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			var delta oaiStreamDelta
+			if err := json.Unmarshal([]byte(payload), &delta); err != nil {
 				ch <- StreamChunk{Error: fmt.Errorf("costguard: decode chunk: %w", err)}
 				return
 			}
+			if len(delta.Choices) == 0 {
+				continue
+			}
+			content := delta.Choices[0].Delta.Content
+			done := delta.Choices[0].FinishReason == "stop"
 			select {
-			case ch <- StreamChunk{Content: chunk.Content, Done: chunk.Done}:
+			case ch <- StreamChunk{Content: content, Done: done}:
 			case <-ctx.Done():
 				ch <- StreamChunk{Error: ctx.Err()}
 				return
 			}
-			if chunk.Done {
+			if done {
 				return
 			}
 		}
@@ -191,21 +253,68 @@ func (c *Client) Stream(ctx context.Context, req CompletionRequest) (<-chan Stre
 	return ch, nil
 }
 
-func (c *Client) buildRequest(req CompletionRequest, stream bool) apiRequest {
-	msgs := make([]apiMessage, len(req.Messages))
-	for i, m := range req.Messages {
-		msgs[i] = apiMessage{Role: m.Role, Content: m.Content}
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+func (c *Client) buildRequest(req CompletionRequest, stream bool) oaiRequest {
+	msgs := make([]oaiMessage, 0, len(req.Messages))
+	for _, m := range req.Messages {
+		msgs = append(msgs, toOAIMessage(m))
 	}
-	return apiRequest{
+
+	var tools []oaiTool
+	for _, td := range req.Tools {
+		tools = append(tools, oaiTool{
+			Type: "function",
+			Function: oaiFunction{
+				Name:        td.Name,
+				Description: td.Description,
+				Parameters:  td.Parameters,
+			},
+		})
+	}
+
+	return oaiRequest{
 		Model:     req.Model,
 		Messages:  msgs,
-		Tools:     req.Tools,
+		Tools:     tools,
 		MaxTokens: req.MaxTokens,
 		Stream:    stream,
 	}
 }
 
-func (c *Client) doPost(ctx context.Context, path string, body apiRequest) (*http.Response, error) {
+func toOAIMessage(t types.ConversationTurn) oaiMessage {
+	msg := oaiMessage{Role: t.Role}
+
+	switch t.Role {
+	case "assistant":
+		if len(t.ToolCalls) > 0 {
+			// Assistant turn with tool calls: content is null, tool_calls is set.
+			msg.ToolCalls = make([]oaiToolCall, len(t.ToolCalls))
+			for i, tc := range t.ToolCalls {
+				msg.ToolCalls[i] = oaiToolCall{
+					ID:   tc.ID,
+					Type: "function",
+					Function: oaiFuncCall{
+						Name:      tc.Name,
+						Arguments: tc.Arguments,
+					},
+				}
+			}
+		} else {
+			msg.Content = &t.Content
+		}
+	case "tool":
+		msg.ToolCallID = t.ToolCallID
+		msg.Content = &t.Content
+	default:
+		// system, user
+		msg.Content = &t.Content
+	}
+
+	return msg
+}
+
+func (c *Client) doPost(ctx context.Context, path string, body oaiRequest) (*http.Response, error) {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)

@@ -15,9 +15,10 @@ const defaultMaxSteps = 10
 // AgenticLoop runs the LLM → tool-call → execute → feed-back cycle until the
 // model returns a plain text response or the step limit is reached.
 //
-// Flow for each step:
+// Each round-trip follows the OpenAI tool-use protocol:
 //  1. Call LLM with current messages and tool definitions.
-//  2. If the response contains tool calls → execute each, append results, repeat.
+//  2. If the response contains tool calls → record them as an assistant turn,
+//     execute each, append one tool-role turn per result, then repeat.
 //  3. If the response contains text (no tool calls) → return it.
 type AgenticLoop struct {
 	// Client is the LLM client used for every completion call.
@@ -27,23 +28,6 @@ type AgenticLoop struct {
 	// MaxSteps caps the number of LLM round-trips (default 10).
 	// Set to 0 to use the default.
 	MaxSteps int
-}
-
-// toolCallRecord is serialised into the conversation so the LLM can see what
-// it previously requested.
-type toolCallRecord struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
-}
-
-// toolResultRecord is serialised into the conversation so the LLM can see what
-// each tool returned.
-type toolResultRecord struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Result string `json:"result,omitempty"`
-	Error  string `json:"error,omitempty"`
 }
 
 // Run executes the agentic loop starting from req. Tool definitions from the
@@ -80,38 +64,29 @@ func (l *AgenticLoop) Run(ctx context.Context, req costguard.CompletionRequest) 
 		slog.InfoContext(ctx, "agentic loop tool calls",
 			"step", step+1, "count", len(resp.ToolCalls))
 
-		// Record what the assistant requested so the LLM sees its own decision.
-		records := make([]toolCallRecord, len(resp.ToolCalls))
-		for i, tc := range resp.ToolCalls {
-			records[i] = toolCallRecord{ID: tc.ID, Name: tc.Name, Arguments: tc.Arguments}
-		}
-		assistantContent, _ := json.Marshal(records)
+		// Append assistant turn recording which tools were requested.
 		msgs = append(msgs, types.ConversationTurn{
-			Role:    "assistant",
-			Content: string(assistantContent),
+			Role:      "assistant",
+			ToolCalls: resp.ToolCalls,
 		})
 
-		// Execute each tool and collect results.
-		results := make([]toolResultRecord, 0, len(resp.ToolCalls))
+		// Execute each tool and append one tool-role turn per result.
 		for _, tc := range resp.ToolCalls {
 			result, execErr := l.Registry.Execute(ctx, tc.Name, json.RawMessage(tc.Arguments))
-			rec := toolResultRecord{ID: tc.ID, Name: tc.Name}
+			var content string
 			if execErr != nil {
 				slog.WarnContext(ctx, "tool execution error",
 					"tool", tc.Name, "error", execErr)
-				rec.Error = execErr.Error()
+				content = fmt.Sprintf(`{"error":%q}`, execErr.Error())
 			} else {
-				rec.Result = result
+				content = result
 			}
-			results = append(results, rec)
+			msgs = append(msgs, types.ConversationTurn{
+				Role:       "tool",
+				ToolCallID: tc.ID,
+				Content:    content,
+			})
 		}
-
-		// Feed all results back as a single user turn.
-		resultsContent, _ := json.Marshal(results)
-		msgs = append(msgs, types.ConversationTurn{
-			Role:    "user",
-			Content: string(resultsContent),
-		})
 	}
 
 	return "", fmt.Errorf("agentic loop: exceeded %d steps without a final response", maxSteps)

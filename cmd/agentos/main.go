@@ -6,19 +6,28 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/marcoantonios1/Agent-OS/internal/agents/comms"
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/memory"
 	"github.com/marcoantonios1/Agent-OS/internal/router"
+	calendarGoogle "github.com/marcoantonios1/Agent-OS/internal/tools/calendar/google"
+	calendarOutlook "github.com/marcoantonios1/Agent-OS/internal/tools/calendar/outlook"
+	"github.com/marcoantonios1/Agent-OS/internal/tools/calendar"
+	emailGmail "github.com/marcoantonios1/Agent-OS/internal/tools/email/gmail"
+	emailOutlook "github.com/marcoantonios1/Agent-OS/internal/tools/email/outlook"
+	"github.com/marcoantonios1/Agent-OS/internal/tools/email"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
 
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = "9091"
 	}
+
+	ctx := context.Background()
 
 	store := memory.NewStore()
 	defer store.Close()
@@ -29,7 +38,7 @@ func main() {
 	classifier := router.NewLLMClassifier(llm)
 
 	agents := map[router.Intent]router.Agent{
-		router.IntentComms:    &placeholderAgent{name: "comms"},
+		router.IntentComms:    comms.New(llm, newEmailProvider(ctx), newCalendarProvider(ctx), approvals),
 		router.IntentBuilder:  &placeholderAgent{name: "builder"},
 		router.IntentResearch: &placeholderAgent{name: "research"},
 	}
@@ -66,6 +75,52 @@ func (s *stubLLMClient) Stream(_ context.Context, _ costguard.CompletionRequest)
 	ch := make(chan costguard.StreamChunk)
 	close(ch)
 	return ch, nil
+}
+
+// newEmailProvider returns a Gmail or Outlook EmailProvider based on which env
+// vars are set, or nil if neither is configured.
+func newEmailProvider(ctx context.Context) email.EmailProvider {
+	if os.Getenv("GMAIL_CLIENT_ID") != "" {
+		p, err := emailGmail.NewFromEnv(ctx)
+		if err != nil {
+			slog.Warn("Gmail provider unavailable", "error", err)
+			return nil
+		}
+		return p
+	}
+	if os.Getenv("OUTLOOK_CLIENT_ID") != "" {
+		p, err := emailOutlook.NewFromEnv(ctx)
+		if err != nil {
+			slog.Warn("Outlook email provider unavailable", "error", err)
+			return nil
+		}
+		return p
+	}
+	slog.Warn("No email provider configured — email tools disabled")
+	return nil
+}
+
+// newCalendarProvider returns a Google or Outlook CalendarProvider based on
+// which env vars are set, or nil if neither is configured.
+func newCalendarProvider(ctx context.Context) calendar.CalendarProvider {
+	if os.Getenv("GOOGLE_CAL_CLIENT_ID") != "" {
+		p, err := calendarGoogle.NewFromEnv(ctx)
+		if err != nil {
+			slog.Warn("Google Calendar provider unavailable", "error", err)
+			return nil
+		}
+		return p
+	}
+	if os.Getenv("OUTLOOK_CLIENT_ID") != "" {
+		p, err := calendarOutlook.NewFromEnv(ctx)
+		if err != nil {
+			slog.Warn("Outlook calendar provider unavailable", "error", err)
+			return nil
+		}
+		return p
+	}
+	slog.Warn("No calendar provider configured — calendar tools disabled")
+	return nil
 }
 
 // placeholderAgent is used until real agent implementations are wired in.

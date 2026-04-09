@@ -29,23 +29,33 @@ func newTestClient(srv *httptest.Server) *Client {
 	return New(srv.URL, "test-key")
 }
 
+// oaiResponseWith builds a minimal OpenAI-format response with the given text content.
+func oaiResponseWith(content string) oaiResponse {
+	c := content
+	return oaiResponse{
+		Choices: []struct {
+			Message oaiMessage `json:"message"`
+		}{
+			{Message: oaiMessage{Role: "assistant", Content: &c}},
+		},
+		Usage: struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		}{PromptTokens: 5, CompletionTokens: 3, TotalTokens: 8},
+	}
+}
+
 func TestComplete_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/complete" {
+		if r.URL.Path != "/v1/chat/completions" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		if r.Header.Get("Authorization") != "Bearer test-key" {
 			t.Errorf("missing or wrong auth header")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(apiResponse{
-			Content: "world",
-			Usage: struct {
-				PromptTokens     int `json:"prompt_tokens"`
-				CompletionTokens int `json:"completion_tokens"`
-				TotalTokens      int `json:"total_tokens"`
-			}{PromptTokens: 5, CompletionTokens: 3, TotalTokens: 8},
-		})
+		json.NewEncoder(w).Encode(oaiResponseWith("world"))
 	}))
 	defer srv.Close()
 
@@ -68,18 +78,15 @@ func TestComplete_RetryOnServerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := calls.Add(1)
 		if n < 3 {
-			// First two attempts fail with 503.
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
-		// Third attempt succeeds.
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(apiResponse{Content: "ok on attempt 3"})
+		json.NewEncoder(w).Encode(oaiResponseWith("ok on attempt 3"))
 	}))
 	defer srv.Close()
 
 	client := newTestClient(srv)
-	// Shorten backoff so the test runs quickly.
 	client.httpClient.Timeout = 5 * time.Second
 
 	resp, err := client.Complete(context.Background(), completionReq())
@@ -151,17 +158,69 @@ func TestComplete_ContextCancelled(t *testing.T) {
 	}
 }
 
+func TestComplete_ToolCallsDecoded(t *testing.T) {
+	args := `{"limit":5}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		resp := oaiResponse{
+			Choices: []struct {
+				Message oaiMessage `json:"message"`
+			}{
+				{Message: oaiMessage{
+					Role: "assistant",
+					ToolCalls: []oaiToolCall{{
+						ID:   "call_1",
+						Type: "function",
+						Function: oaiFuncCall{Name: "email_list", Arguments: args},
+					}},
+				}},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(srv)
+	resp, err := client.Complete(context.Background(), completionReq())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("got %d tool calls, want 1", len(resp.ToolCalls))
+	}
+	if resp.ToolCalls[0].Name != "email_list" {
+		t.Errorf("tool name = %q, want email_list", resp.ToolCalls[0].Name)
+	}
+	if resp.ToolCalls[0].Arguments != args {
+		t.Errorf("arguments = %q, want %q", resp.ToolCalls[0].Arguments, args)
+	}
+}
+
 func TestStream_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/stream" {
+		if r.URL.Path != "/v1/chat/completions" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher := w.(http.Flusher)
 
-		chunks := []string{"hello", " world"}
-		for i, c := range chunks {
-			data, _ := json.Marshal(sseChunk{Content: c, Done: i == len(chunks)-1})
+		chunks := []struct{ content, finish string }{
+			{"hello", ""},
+			{" world", "stop"},
+		}
+		for _, c := range chunks {
+			data, _ := json.Marshal(oaiStreamDelta{
+				Choices: []struct {
+					Delta struct {
+						Content   string        `json:"content"`
+						ToolCalls []oaiToolCall `json:"tool_calls"`
+					} `json:"delta"`
+					FinishReason string `json:"finish_reason"`
+				}{{
+					Delta:        struct{ Content string `json:"content"`; ToolCalls []oaiToolCall `json:"tool_calls"` }{Content: c.content},
+					FinishReason: c.finish,
+				}},
+			})
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 		}
@@ -190,7 +249,7 @@ func TestStream_DoneMarker(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher := w.(http.Flusher)
-		fmt.Fprintf(w, "data: {\"content\":\"hi\",\"done\":false}\n\n")
+		fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"\"}]}\n\n")
 		flusher.Flush()
 		fmt.Fprintf(w, "data: [DONE]\n\n")
 		flusher.Flush()
