@@ -24,7 +24,7 @@ import (
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = "9091"
 	}
 
 	ctx := context.Background()
@@ -103,7 +103,7 @@ func newEmailProvider(ctx context.Context) email.EmailProvider {
 // newCalendarProvider returns a Google or Outlook CalendarProvider based on
 // which env vars are set, or nil if neither is configured.
 func newCalendarProvider(ctx context.Context) calendar.CalendarProvider {
-	if os.Getenv("GOOGLE_CLIENT_ID") != "" {
+	if os.Getenv("GOOGLE_CAL_CLIENT_ID") != "" {
 		p, err := calendarGoogle.NewFromEnv(ctx)
 		if err != nil {
 			slog.Warn("Google Calendar provider unavailable", "error", err)
