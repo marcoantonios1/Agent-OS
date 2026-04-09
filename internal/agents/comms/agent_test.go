@@ -47,7 +47,7 @@ func (m *seqLLM) Stream(_ context.Context, _ costguard.CompletionRequest) (<-cha
 func toolCall(id, name string, args any) costguard.CompletionResponse {
 	b, _ := json.Marshal(args)
 	return costguard.CompletionResponse{
-		ToolCalls: []costguard.ToolCall{{ID: id, Name: name, Arguments: string(b)}},
+		ToolCalls: []types.ToolCall{{ID: id, Name: name, Arguments: string(b)}},
 	}
 }
 

@@ -44,12 +44,28 @@ type OutboundMessage struct {
 	Metadata map[string]string
 }
 
+// ToolCall represents a single tool invocation requested by the model.
+type ToolCall struct {
+	// ID is the opaque identifier for this call, used to correlate results.
+	ID string
+	// Name is the tool being invoked.
+	Name string
+	// Arguments is the raw JSON-encoded argument string from the model.
+	Arguments string
+}
+
 // ConversationTurn represents a single exchange in a conversation history.
+// Role may be "system", "user", "assistant", or "tool".
 type ConversationTurn struct {
-	// Role is either "user" or "assistant".
+	// Role is "system", "user", "assistant", or "tool".
 	Role string
-	// Content is the text of the turn.
+	// Content is the text of the turn. Empty for assistant turns that only
+	// contain tool calls.
 	Content string
+	// ToolCalls is populated for assistant turns that request tool calls.
+	ToolCalls []ToolCall
+	// ToolCallID ties a tool-role turn back to the ToolCall it is responding to.
+	ToolCallID string
 }
 
 // AgentRequest is the input payload passed to an agent for processing.

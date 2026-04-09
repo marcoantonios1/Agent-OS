@@ -62,15 +62,15 @@ func (m *mockLLMClient) Stream(_ context.Context, _ costguard.CompletionRequest)
 	return ch, nil
 }
 
-func toolCall(id, name, args string) costguard.ToolCall {
-	return costguard.ToolCall{ID: id, Name: name, Arguments: args}
+func toolCall(id, name, args string) types.ToolCall {
+	return types.ToolCall{ID: id, Name: name, Arguments: args}
 }
 
 func textResp(content string) costguard.CompletionResponse {
 	return costguard.CompletionResponse{Content: content}
 }
 
-func toolCallResp(calls ...costguard.ToolCall) costguard.CompletionResponse {
+func toolCallResp(calls ...types.ToolCall) costguard.CompletionResponse {
 	return costguard.CompletionResponse{ToolCalls: calls}
 }
 
