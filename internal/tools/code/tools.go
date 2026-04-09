@@ -189,7 +189,7 @@ func (t *WriteTool) Execute(ctx context.Context, input json.RawMessage) (string,
 		return "", fmt.Errorf("file_write: %w", err)
 	}
 
-	sessionID, _ := approval.SessionIDFromContext(ctx)
+	sessionID := approval.SessionIDFromContext(ctx)
 	slog.InfoContext(ctx, "file_write",
 		"path", in.Path,
 		"bytes", len(in.Content),
