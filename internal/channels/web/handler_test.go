@@ -20,8 +20,8 @@ import (
 
 type stubClassifier struct{ intent router.Intent }
 
-func (s *stubClassifier) Classify(_ context.Context, _, _ string, _ []types.ConversationTurn) (router.Intent, error) {
-	return s.intent, nil
+func (s *stubClassifier) Classify(_ context.Context, _, _ string, _ []types.ConversationTurn) ([]router.Intent, error) {
+	return []router.Intent{s.intent}, nil
 }
 
 type recordingAgent struct {
