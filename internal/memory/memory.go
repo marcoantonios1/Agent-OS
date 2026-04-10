@@ -137,21 +137,32 @@ func (s *Store) AppendTurn(sessionID, role, content string) error {
 }
 
 // SetMetadata sets a single key/value pair on the session metadata map.
-// It is a no-op if the session does not exist or has expired.
+// If the session does not exist it is created with just the metadata entry
+// (history-less), which allows agents to persist state even when called
+// outside the router's normal session-creation flow.
 func (s *Store) SetMetadata(sessionID, key, value string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	now := time.Now()
 	e, ok := s.sessions[sessionID]
-	if !ok || time.Now().After(e.expiresAt) {
+	if !ok || now.After(e.expiresAt) {
+		// Upsert: create a minimal session so the metadata is not lost.
+		sess := &sessions.Session{
+			ID:        sessionID,
+			Metadata:  map[string]string{key: value},
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		s.sessions[sessionID] = &entry{session: sess, expiresAt: now.Add(s.ttl)}
 		return nil
 	}
 	if e.session.Metadata == nil {
 		e.session.Metadata = make(map[string]string)
 	}
 	e.session.Metadata[key] = value
-	e.session.UpdatedAt = time.Now()
-	e.expiresAt = time.Now().Add(s.ttl)
+	e.session.UpdatedAt = now
+	e.expiresAt = now.Add(s.ttl)
 	return nil
 }
 
