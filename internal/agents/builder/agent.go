@@ -170,6 +170,7 @@ func New(llm costguard.LLMClient, store sessions.SessionStore, cfg code.Config) 
 		loop: &tools.AgenticLoop{
 			Client:   llm,
 			Registry: reg,
+			MaxSteps: 50, // codegen tasks write many files; 10 is too low
 		},
 		sessions: store,
 	}
