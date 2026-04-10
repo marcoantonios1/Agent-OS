@@ -97,10 +97,18 @@ func (r *Router) Route(ctx context.Context, msg types.InboundMessage) (types.Out
 
 	// 5. Dispatch — inject session ID into ctx so tools can read it.
 	ctx = approval.WithSessionID(ctx, msg.SessionID)
-	replyText, dispatchErr := r.dispatch(ctx, msg, intent, history)
+	agentResp, dispatchErr := r.dispatch(ctx, msg, intent, history, sess.Metadata)
+
+	// Save any metadata the agent produced back into the session.
+	for k, v := range agentResp.Metadata {
+		if err := r.Sessions.SetMetadata(msg.SessionID, k, v); err != nil {
+			r.log.WarnContext(ctx, "failed to save agent metadata",
+				"session_id", msg.SessionID, "key", k, "error", err)
+		}
+	}
 
 	// 6. Persist turns regardless of dispatch outcome so history stays accurate.
-	if persistErr := r.persistTurns(msg.SessionID, msg.Text, replyText); persistErr != nil {
+	if persistErr := r.persistTurns(msg.SessionID, msg.Text, agentResp.Output); persistErr != nil {
 		r.log.WarnContext(ctx, "failed to persist turns", "session_id", msg.SessionID, "error", persistErr)
 	}
 
@@ -112,7 +120,7 @@ func (r *Router) Route(ctx context.Context, msg types.InboundMessage) (types.Out
 		SessionID: msg.SessionID,
 		ChannelID: msg.ChannelID,
 		UserID:    msg.UserID,
-		Text:      replyText,
+		Text:      agentResp.Output,
 	}, nil
 }
 
@@ -147,22 +155,25 @@ func (r *Router) loadOrCreate(msg types.InboundMessage) (*sessions.Session, erro
 }
 
 // dispatch resolves the intent to an Agent and calls it. For IntentUnknown or
-// an unregistered intent it returns a helpful fallback string without an error.
+// an unregistered intent it returns a fallback AgentResponse without an error.
 func (r *Router) dispatch(
 	ctx context.Context,
 	msg types.InboundMessage,
 	intent Intent,
 	history []types.ConversationTurn,
-) (string, error) {
+	sessionMeta map[string]string,
+) (types.AgentResponse, error) {
+	fallback := types.AgentResponse{Output: unknownIntentReply}
+
 	if intent == IntentUnknown {
-		return unknownIntentReply, nil
+		return fallback, nil
 	}
 
 	agent, ok := r.Agents[intent]
 	if !ok {
 		r.log.WarnContext(ctx, "no agent registered for intent",
 			"session_id", msg.SessionID, "intent", intent)
-		return unknownIntentReply, nil
+		return fallback, nil
 	}
 
 	resp, err := agent.Handle(ctx, types.AgentRequest{
@@ -171,12 +182,12 @@ func (r *Router) dispatch(
 		Intent:    string(intent),
 		History:   history,
 		Input:     msg.Text,
-		Metadata:  msg.Metadata,
+		Metadata:  sessionMeta,
 	})
 	if err != nil {
-		return "", fmt.Errorf("agent %s: %w", intent, err)
+		return types.AgentResponse{}, fmt.Errorf("agent %s: %w", intent, err)
 	}
-	return resp.Output, nil
+	return resp, nil
 }
 
 // persistTurns appends both the user and assistant turns to the session store.
