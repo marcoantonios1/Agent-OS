@@ -29,18 +29,19 @@ const (
 	IntentUnknown Intent = "unknown"
 )
 
-// IntentClassifier classifies an inbound message into an Intent.
-// Implementations must not call any LLM provider directly; they must use the
-// costguard.LLMClient interface.
+// IntentClassifier classifies an inbound message into an ordered list of
+// Intents. A single-intent message returns a one-element slice. A compound
+// message (e.g. "reply to that email AND continue building the app") returns
+// intents in the order the user stated them.
 type IntentClassifier interface {
-	Classify(ctx context.Context, sessionID, input string, history []types.ConversationTurn) (Intent, error)
+	Classify(ctx context.Context, sessionID, input string, history []types.ConversationTurn) ([]Intent, error)
 }
 
 const classifierModel = "claude-sonnet-4-6"
 
 const systemPrompt = `You are an intent classifier for a multi-agent AI system.
 Your job is to read the user's latest message (and optionally the conversation
-history) and return exactly ONE JSON object with a single key "intent".
+history) and return a JSON object with an "intents" array.
 
 The valid intent values are:
 
@@ -66,8 +67,23 @@ The valid intent values are:
 - "unknown"  – The message is ambiguous, off-topic, or cannot be reliably
                classified into any of the above categories.
 
+## Compound requests
+If the user asks for multiple distinct tasks that belong to different agents,
+return all applicable intents IN THE ORDER the user stated them.
+
+Examples:
+- "Reply to that investor email, then continue building the landing page"
+  → {"intents": ["comms", "builder"]}
+- "Research GraphQL vs REST, then write me an implementation"
+  → {"intents": ["research", "builder"]}
+- "Send an email to Alice"
+  → {"intents": ["comms"]}
+
 Respond with ONLY valid JSON. No markdown, no explanation, no extra keys.
-Example response: {"intent": "builder"}`
+Always use the "intents" array — never a bare "intent" string.
+Example responses:
+  {"intents": ["builder"]}
+  {"intents": ["comms", "builder"]}`
 
 // LLMClassifier is the production IntentClassifier that uses Costguard for
 // LLM-based classification.
@@ -85,35 +101,33 @@ func NewLLMClassifier(client costguard.LLMClient) *LLMClassifier {
 }
 
 // Classify sends the input (and optional history) to Costguard and parses the
-// returned JSON intent. Falls back to IntentUnknown on any parse failure.
-func (c *LLMClassifier) Classify(ctx context.Context, sessionID, input string, history []types.ConversationTurn) (Intent, error) {
+// returned JSON intent list. Falls back to [IntentUnknown] on any parse failure.
+func (c *LLMClassifier) Classify(ctx context.Context, sessionID, input string, history []types.ConversationTurn) ([]Intent, error) {
 	messages := buildMessages(history, input)
 
 	req := costguard.CompletionRequest{
 		Model:     classifierModel,
 		Messages:  messages,
-		MaxTokens: 32, // response is always {"intent":"<value>"} — tiny
+		MaxTokens: 64, // response is always a small JSON array
 	}
 
 	resp, err := c.client.Complete(ctx, req)
 	if err != nil {
 		c.log.WarnContext(ctx, "classifier LLM call failed, defaulting to unknown",
 			"session_id", sessionID, "error", err)
-		return IntentUnknown, fmt.Errorf("classify: LLM call failed: %w", err)
+		return []Intent{IntentUnknown}, fmt.Errorf("classify: LLM call failed: %w", err)
 	}
 
-	intent := parseIntent(resp.Content)
+	intents := parseIntents(resp.Content)
 	c.log.InfoContext(ctx, "intent classified",
 		"session_id", sessionID,
-		"intent", intent,
+		"intents", intents,
 		"raw", resp.Content,
 	)
-	return intent, nil
+	return intents, nil
 }
 
 // buildMessages constructs the message slice for the classifier request.
-// The system prompt is injected as the first "user" turn so it is always
-// present regardless of history length.
 func buildMessages(history []types.ConversationTurn, input string) []types.ConversationTurn {
 	msgs := make([]types.ConversationTurn, 0, len(history)+2)
 	msgs = append(msgs, types.ConversationTurn{
@@ -122,7 +136,7 @@ func buildMessages(history []types.ConversationTurn, input string) []types.Conve
 	})
 	msgs = append(msgs, types.ConversationTurn{
 		Role:    "assistant",
-		Content: "Understood. Send me the message to classify.",
+		Content: `Understood. Send me the message to classify and I'll return {"intents":[...]}`,
 	})
 	msgs = append(msgs, history...)
 	msgs = append(msgs, types.ConversationTurn{
@@ -132,14 +146,17 @@ func buildMessages(history []types.ConversationTurn, input string) []types.Conve
 	return msgs
 }
 
-// classifyResponse is the expected JSON shape from the LLM.
+// classifyResponse accepts both the new array format and the legacy single-
+// intent format so tests and older integrations keep working.
 type classifyResponse struct {
-	Intent string `json:"intent"`
+	Intents []string `json:"intents"` // preferred: ["comms","builder"]
+	Intent  string   `json:"intent"`  // legacy fallback: "comms"
 }
 
-// parseIntent extracts the Intent from the LLM's JSON response. On any parse
-// or validation error it returns IntentUnknown.
-func parseIntent(raw string) Intent {
+// parseIntents extracts the []Intent from the LLM's JSON response.
+// On any parse or validation error it returns [IntentUnknown].
+// Supports both {"intents":["comms","builder"]} and legacy {"intent":"comms"}.
+func parseIntents(raw string) []Intent {
 	raw = strings.TrimSpace(raw)
 
 	// Strip markdown code fences if the model wrapped its response.
@@ -152,15 +169,38 @@ func parseIntent(raw string) Intent {
 
 	var result classifyResponse
 	if err := json.Unmarshal([]byte(raw), &result); err != nil {
-		return IntentUnknown
+		return []Intent{IntentUnknown}
 	}
 
-	switch Intent(result.Intent) {
-	case IntentComms, IntentBuilder, IntentResearch, IntentUnknown:
-		return Intent(result.Intent)
-	default:
-		return IntentUnknown
+	// New format: intents array.
+	if len(result.Intents) > 0 {
+		out := make([]Intent, 0, len(result.Intents))
+		for _, s := range result.Intents {
+			intent := Intent(s)
+			switch intent {
+			case IntentComms, IntentBuilder, IntentResearch, IntentUnknown:
+				out = append(out, intent)
+			default:
+				out = append(out, IntentUnknown)
+			}
+		}
+		return out
 	}
+
+	// Legacy fallback: single "intent" string.
+	if result.Intent != "" {
+		switch Intent(result.Intent) {
+		case IntentComms, IntentBuilder, IntentResearch, IntentUnknown:
+			return []Intent{Intent(result.Intent)}
+		}
+	}
+
+	return []Intent{IntentUnknown}
+}
+
+// parseIntent is kept for backward-compat with existing unit tests.
+func parseIntent(raw string) Intent {
+	return parseIntents(raw)[0]
 }
 
 // Compile-time check: *LLMClassifier satisfies IntentClassifier.

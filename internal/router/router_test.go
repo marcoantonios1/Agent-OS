@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,12 +15,16 @@ import (
 // --- test doubles ---
 
 type stubClassifier struct {
-	intent Intent
-	err    error
+	intents []Intent
+	err     error
 }
 
-func (s *stubClassifier) Classify(_ context.Context, _, _ string, _ []types.ConversationTurn) (Intent, error) {
-	return s.intent, s.err
+func newStubClassifier(intents ...Intent) *stubClassifier {
+	return &stubClassifier{intents: intents}
+}
+
+func (s *stubClassifier) Classify(_ context.Context, _, _ string, _ []types.ConversationTurn) ([]Intent, error) {
+	return s.intents, s.err
 }
 
 type stubAgent struct {
@@ -53,7 +58,7 @@ func newRouter(intent Intent, agentOutput string) (*Router, *stubAgent, *memory.
 	store := memory.NewStore()
 	agent := &stubAgent{output: agentOutput}
 	r := New(
-		&stubClassifier{intent: intent},
+		newStubClassifier(intent),
 		map[Intent]Agent{intent: agent},
 		store,
 		approval.NewMemoryStore(),
@@ -113,7 +118,7 @@ func TestRoute_ResearchAgent(t *testing.T) {
 func TestRoute_UnknownIntent_ReturnsHelpfulMessage(t *testing.T) {
 	store := memory.NewStore()
 	r := New(
-		&stubClassifier{intent: IntentUnknown},
+		newStubClassifier(IntentUnknown),
 		map[Intent]Agent{},
 		store,
 	
@@ -135,7 +140,7 @@ func TestRoute_UnregisteredIntent_ReturnsHelpfulMessage(t *testing.T) {
 	store := memory.NewStore()
 	// Classifier returns "builder" but no builder agent is registered.
 	r := New(
-		&stubClassifier{intent: IntentBuilder},
+		newStubClassifier(IntentBuilder),
 		map[Intent]Agent{},
 		store,
 	
@@ -153,7 +158,7 @@ func TestRoute_UnregisteredIntent_ReturnsHelpfulMessage(t *testing.T) {
 func TestRoute_ClassifierError_FallsBackToUnknown(t *testing.T) {
 	store := memory.NewStore()
 	r := New(
-		&stubClassifier{intent: IntentUnknown, err: errors.New("LLM unavailable")},
+		&stubClassifier{intents: []Intent{IntentUnknown}, err: errors.New("LLM unavailable")},
 		map[Intent]Agent{},
 		store,
 	
@@ -173,7 +178,7 @@ func TestRoute_AgentError_PropagatesError(t *testing.T) {
 	store := memory.NewStore()
 	agent := &stubAgent{err: errors.New("agent exploded")}
 	r := New(
-		&stubClassifier{intent: IntentComms},
+		newStubClassifier(IntentComms),
 		map[Intent]Agent{IntentComms: agent},
 		store,
 	
@@ -291,7 +296,7 @@ func TestRoute_ConfirmKeyword_GrantsPendingApprovals(t *testing.T) {
 	agent := &stubAgent{output: "done"}
 
 	r := New(
-		&stubClassifier{intent: IntentComms},
+		newStubClassifier(IntentComms),
 		map[Intent]Agent{IntentComms: agent},
 		store,
 		approvals,
@@ -321,7 +326,7 @@ func TestRoute_NonConfirmMessage_DoesNotGrantApprovals(t *testing.T) {
 	agent := &stubAgent{output: "ok"}
 
 	r := New(
-		&stubClassifier{intent: IntentComms},
+		newStubClassifier(IntentComms),
 		map[Intent]Agent{IntentComms: agent},
 		store,
 		approvals,
@@ -355,7 +360,7 @@ func TestRoute_SessionIDInjectedIntoContext(t *testing.T) {
 	_ = capturer
 
 	r := New(
-		&stubClassifier{intent: IntentComms},
+		newStubClassifier(IntentComms),
 		map[Intent]Agent{IntentComms: &ctxCapturingAgent{output: "ok", ctxOut: &capturedCtx}},
 		store,
 		approvals,
@@ -380,4 +385,121 @@ type ctxCapturingAgent struct {
 func (a *ctxCapturingAgent) Handle(ctx context.Context, _ types.AgentRequest) (types.AgentResponse, error) {
 	*a.ctxOut = ctx
 	return types.AgentResponse{AgentID: "capture", Output: a.output}, nil
+}
+
+// --- compound (mixed-intent) tests ---
+
+func TestRoute_CompoundIntent_BothAgentsRun(t *testing.T) {
+	store := memory.NewStore()
+	commsAgent := &stubAgent{output: "Email drafted."}
+	builderAgent := &stubAgent{output: "File written."}
+
+	r := New(
+		newStubClassifier(IntentComms, IntentBuilder),
+		map[Intent]Agent{
+			IntentComms:   commsAgent,
+			IntentBuilder: builderAgent,
+		},
+		store,
+		approval.NewMemoryStore(),
+	)
+
+	out, err := r.Route(context.Background(),
+		newMsg("sess-compound", "user-1",
+			"Reply to that investor email, then continue building the landing page"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Both agents must have been called exactly once.
+	if len(commsAgent.calls) != 1 {
+		t.Errorf("comms agent called %d times, want 1", len(commsAgent.calls))
+	}
+	if len(builderAgent.calls) != 1 {
+		t.Errorf("builder agent called %d times, want 1", len(builderAgent.calls))
+	}
+
+	// Both outputs must appear in the merged reply.
+	if !strings.Contains(out.Text, "Email drafted.") {
+		t.Errorf("comms output missing from merged reply: %q", out.Text)
+	}
+	if !strings.Contains(out.Text, "File written.") {
+		t.Errorf("builder output missing from merged reply: %q", out.Text)
+	}
+}
+
+func TestRoute_CompoundIntent_OrderPreserved(t *testing.T) {
+	store := memory.NewStore()
+	commsAgent := &stubAgent{output: "COMMS_REPLY"}
+	builderAgent := &stubAgent{output: "BUILDER_REPLY"}
+
+	r := New(
+		newStubClassifier(IntentComms, IntentBuilder),
+		map[Intent]Agent{
+			IntentComms:   commsAgent,
+			IntentBuilder: builderAgent,
+		},
+		store,
+		approval.NewMemoryStore(),
+	)
+
+	out, err := r.Route(context.Background(), newMsg("sess-order", "user-1", "do both"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	commsPos := strings.Index(out.Text, "COMMS_REPLY")
+	builderPos := strings.Index(out.Text, "BUILDER_REPLY")
+	if commsPos < 0 || builderPos < 0 {
+		t.Fatalf("one or both outputs missing: %q", out.Text)
+	}
+	if commsPos > builderPos {
+		t.Errorf("comms reply should appear before builder reply; got:\n%s", out.Text)
+	}
+}
+
+func TestRoute_CompoundIntent_OneAgentFails_OtherOutputSurvives(t *testing.T) {
+	store := memory.NewStore()
+	commsAgent := &stubAgent{err: errors.New("email service down")}
+	builderAgent := &stubAgent{output: "Code generated."}
+
+	r := New(
+		newStubClassifier(IntentComms, IntentBuilder),
+		map[Intent]Agent{
+			IntentComms:   commsAgent,
+			IntentBuilder: builderAgent,
+		},
+		store,
+		approval.NewMemoryStore(),
+	)
+
+	out, err := r.Route(context.Background(), newMsg("sess-partial", "user-1", "do both"))
+	// Compound dispatch: error is absorbed, not propagated.
+	if err != nil {
+		t.Fatalf("compound dispatch should not propagate per-agent errors: %v", err)
+	}
+	if !strings.Contains(out.Text, "Code generated.") {
+		t.Errorf("surviving agent output missing: %q", out.Text)
+	}
+	if !strings.Contains(out.Text, "error") {
+		t.Errorf("failing agent error should be noted in output: %q", out.Text)
+	}
+}
+
+func TestRoute_CompoundIntent_AllUnknown_ReturnsFallback(t *testing.T) {
+	store := memory.NewStore()
+	r := New(
+		newStubClassifier(IntentUnknown, IntentUnknown),
+		map[Intent]Agent{},
+		store,
+		approval.NewMemoryStore(),
+	)
+
+	out, err := r.Route(context.Background(), newMsg("sess-allunknown", "user-1", "???"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Text == "" {
+		t.Error("expected fallback reply, got empty string")
+	}
 }
