@@ -41,4 +41,7 @@ type SessionStore interface {
 	Delete(sessionID string) error
 	// AppendTurn appends a single conversation turn to an existing session.
 	AppendTurn(sessionID, role, content string) error
+	// SetMetadata sets a single key/value pair on the session's Metadata map.
+	// It is a no-op if the session does not exist.
+	SetMetadata(sessionID, key, value string) error
 }

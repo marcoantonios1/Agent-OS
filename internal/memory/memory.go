@@ -136,6 +136,25 @@ func (s *Store) AppendTurn(sessionID, role, content string) error {
 	return nil
 }
 
+// SetMetadata sets a single key/value pair on the session metadata map.
+// It is a no-op if the session does not exist or has expired.
+func (s *Store) SetMetadata(sessionID, key, value string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	e, ok := s.sessions[sessionID]
+	if !ok || time.Now().After(e.expiresAt) {
+		return nil
+	}
+	if e.session.Metadata == nil {
+		e.session.Metadata = make(map[string]string)
+	}
+	e.session.Metadata[key] = value
+	e.session.UpdatedAt = time.Now()
+	e.expiresAt = time.Now().Add(s.ttl)
+	return nil
+}
+
 // cleanupLoop periodically removes expired sessions from the map.
 func (s *Store) cleanupLoop() {
 	ticker := time.NewTicker(s.ttl / 2)
