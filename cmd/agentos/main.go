@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/marcoantonios1/Agent-OS/internal/agents/builder"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/comms"
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
+	"github.com/marcoantonios1/Agent-OS/internal/tools/code"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/memory"
@@ -39,7 +41,7 @@ func main() {
 
 	agents := map[router.Intent]router.Agent{
 		router.IntentComms:    comms.New(llm, newEmailProvider(ctx), newCalendarProvider(ctx), approvals),
-		router.IntentBuilder:  &placeholderAgent{name: "builder"},
+		router.IntentBuilder:  builder.New(llm, store, newBuilderConfig()),
 		router.IntentResearch: &placeholderAgent{name: "research"},
 	}
 
@@ -121,6 +123,18 @@ func newCalendarProvider(ctx context.Context) calendar.CalendarProvider {
 	}
 	slog.Warn("No calendar provider configured — calendar tools disabled")
 	return nil
+}
+
+// newBuilderConfig returns a code.Config for the Builder Agent sandbox.
+// The sandbox directory defaults to a "workspace" folder next to the binary;
+// override with BUILDER_SANDBOX_DIR.
+func newBuilderConfig() code.Config {
+	dir := os.Getenv("BUILDER_SANDBOX_DIR")
+	if dir == "" {
+		dir = "workspace"
+	}
+	os.MkdirAll(dir, 0o755) //nolint:errcheck
+	return code.Config{SandboxDir: dir}
 }
 
 // placeholderAgent is used until real agent implementations are wired in.
