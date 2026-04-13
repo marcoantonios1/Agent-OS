@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/marcoantonios1/Agent-OS/internal/observability"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
 
@@ -113,8 +114,9 @@ func (h *Handler) healthz(w http.ResponseWriter, _ *http.Request) {
 
 // --- middleware ---
 
-// requestIDMiddleware injects a request ID into the context and sets it as a
-// response header. It honours an incoming X-Request-ID header if present.
+// requestIDMiddleware injects a request ID into the context as both the local
+// reqIDKey and as the observability trace_id, and sets it as a response header.
+// It honours an incoming X-Request-ID header if present.
 func requestIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get("X-Request-ID")
@@ -122,7 +124,9 @@ func requestIDMiddleware(next http.Handler) http.Handler {
 			id = newRequestID()
 		}
 		w.Header().Set("X-Request-ID", id)
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), reqIDKey, id)))
+		ctx := context.WithValue(r.Context(), reqIDKey, id)
+		ctx = observability.WithTraceID(ctx, id)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
