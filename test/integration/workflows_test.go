@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/email"
 )
 
