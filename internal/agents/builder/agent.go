@@ -21,7 +21,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/sessions"
@@ -188,6 +190,13 @@ func (a *Agent) Handle(ctx context.Context, req types.AgentRequest) (types.Agent
 	}
 
 	phase := metaGet(meta, KeyPhase, PhaseRequirements)
+
+	slog.InfoContext(ctx, "agent_start",
+		"agent_id", string(agentID),
+		"session_id", req.SessionID,
+		"phase", phase,
+	)
+	start := time.Now()
 	spec := metaGet(meta, KeySpec, "")
 	tasks := metaGet(meta, KeyTasks, "")
 	activeTask := metaGet(meta, KeyActiveTask, "0")
@@ -212,6 +221,12 @@ func (a *Agent) Handle(ctx context.Context, req types.AgentRequest) (types.Agent
 	for k, v := range newMeta {
 		_ = a.sessions.SetMetadata(req.SessionID, k, v)
 	}
+
+	slog.InfoContext(ctx, "agent_complete",
+		"agent_id", string(agentID),
+		"session_id", req.SessionID,
+		"latency_ms", time.Since(start).Milliseconds(),
+	)
 
 	return types.AgentResponse{
 		AgentID:  agentID,

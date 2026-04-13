@@ -39,9 +39,6 @@ func TestSetup_LogLevelDebug(t *testing.T) {
 func TestContextHandler_InjectsTraceID(t *testing.T) {
 	var buf bytes.Buffer
 
-	// Build the same handler stack Setup() builds, but write to buf.
-	base := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
-
 	// Wrap with the context-aware handler by calling Setup-equivalent logic.
 	// We test the exported helpers + the behaviour rather than internal types.
 	observability.Setup("info")

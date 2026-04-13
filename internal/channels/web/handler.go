@@ -84,14 +84,22 @@ func (h *Handler) chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start := time.Now()
 	msg := types.InboundMessage{
 		ID:        reqIDFromCtx(r.Context()),
 		ChannelID: types.ChannelID("web"),
 		UserID:    req.UserID,
 		SessionID: req.SessionID,
 		Text:      req.Text,
-		Timestamp: time.Now(),
+		Timestamp: start,
 	}
+
+	h.log.InfoContext(r.Context(), "channel_received",
+		"session_id", req.SessionID,
+		"user_id", req.UserID,
+		"text_length", len(req.Text),
+		"channel", "web",
+	)
 
 	out, err := h.dispatcher.Route(r.Context(), msg)
 	if err != nil {
@@ -100,6 +108,12 @@ func (h *Handler) chat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+
+	h.log.InfoContext(r.Context(), "channel_response",
+		"session_id", req.SessionID,
+		"latency_ms", time.Since(start).Milliseconds(),
+		"channel", "web",
+	)
 
 	writeJSON(w, http.StatusOK, chatResponse{
 		SessionID: out.SessionID,
