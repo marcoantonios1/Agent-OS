@@ -4,5 +4,5 @@ bin/
 *.test
 *.out
 vendor/
-agentos
-emailtest
+/agentos
+/emailtest

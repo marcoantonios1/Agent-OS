@@ -66,13 +66,54 @@ Copy `.env.example` to `.env` and fill in the values you need:
 cp .env.example .env
 ```
 
-| Variable | Description |
-|---|---|
-| `COSTGUARD_URL` | Costguard gateway base URL |
-| `COSTGUARD_API_KEY` | Costguard API key |
-| `PORT` | HTTP server port (default `8080`) |
-| `GMAIL_*` | Gmail credentials — see [docs/email-setup.md](docs/email-setup.md) |
-| `OUTLOOK_*` | Outlook credentials — see [docs/email-setup.md](docs/email-setup.md) |
+Configuration is loaded at startup from `.env` (if present) and then from actual environment variables, which always take precedence over the file.
+
+### Server
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `COSTGUARD_URL` | **Yes** | — | Costguard gateway base URL (e.g. `http://localhost:8080`) |
+| `COSTGUARD_API_KEY` | No | — | Bearer token for the Costguard gateway |
+| `PORT` | No | `9091` | TCP port the HTTP server listens on |
+| `LOG_LEVEL` | No | `info` | Minimum log level: `debug`, `info`, `warn`, `error` |
+| `SESSION_TTL` | No | `24h` | How long idle sessions are kept in memory (e.g. `30m`, `12h`) |
+
+### Builder Agent
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `BUILDER_SANDBOX_DIR` | No | `workspace` | Root directory for all file/shell operations by the Builder Agent |
+
+### Gmail
+
+| Variable | Required | Description |
+|---|---|---|
+| `GMAIL_CLIENT_ID` | For Gmail | OAuth2 client ID — see [docs/email-setup.md](docs/email-setup.md) |
+| `GMAIL_CLIENT_SECRET` | For Gmail | OAuth2 client secret |
+| `GMAIL_REFRESH_TOKEN` | For Gmail | Long-lived refresh token (obtained via `make gmailauth`) |
+
+### Google Calendar
+
+| Variable | Required | Description |
+|---|---|---|
+| `GOOGLE_CAL_CLIENT_ID` | For Google Cal | OAuth2 client ID |
+| `GOOGLE_CAL_CLIENT_SECRET` | For Google Cal | OAuth2 client secret |
+| `GOOGLE_CAL_REFRESH_TOKEN` | For Google Cal | Long-lived refresh token (obtained via `make googlecalauth`) |
+
+### Outlook (email)
+
+| Variable | Required | Description |
+|---|---|---|
+| `OUTLOOK_CLIENT_ID` | For Outlook email | Azure app client ID — see [docs/email-setup.md](docs/email-setup.md) |
+| `OUTLOOK_CLIENT_SECRET` | No | Client secret (not required for device code flow apps) |
+| `OUTLOOK_REFRESH_TOKEN` | For Outlook email | Long-lived refresh token (obtained via `make outlookauth`) |
+
+### Outlook Calendar
+
+| Variable | Required | Description |
+|---|---|---|
+| `OUTLOOK_CAL_CLIENT_ID` | For Outlook Cal | Azure app client ID |
+| `OUTLOOK_CAL_REFRESH_TOKEN` | For Outlook Cal | Long-lived refresh token (obtained via `make outlookcalauth`) |
 
 ## API
 

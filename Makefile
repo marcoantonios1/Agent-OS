@@ -10,7 +10,7 @@ lint:
 	go vet ./...
 
 run:
-	set -a && . ./.env && set +a && go run ./cmd/agentos/
+	go run ./cmd/agentos/
 
 test-api:
 	bash scripts/test_api.sh
