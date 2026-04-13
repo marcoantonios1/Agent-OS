@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
+	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
 	"github.com/marcoantonios1/Agent-OS/internal/memory"
 	"github.com/marcoantonios1/Agent-OS/internal/router"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
@@ -47,6 +48,11 @@ type testFixture struct {
 	agent *recordingAgent
 }
 
+// stubReadiness is a test ReadinessChecker whose error is configurable.
+type stubReadiness struct{ err error }
+
+func (s *stubReadiness) Ping(_ context.Context) error { return s.err }
+
 func newFixture(t *testing.T, intent router.Intent, agentOutput string) *testFixture {
 	t.Helper()
 	store := memory.NewStore()
@@ -57,7 +63,7 @@ func newFixture(t *testing.T, intent router.Intent, agentOutput string) *testFix
 		store,
 		approval.NewMemoryStore(),
 	)
-	srv := httptest.NewServer(web.NewHandler(r))
+	srv := httptest.NewServer(web.NewHandler(r, nil))
 	t.Cleanup(srv.Close)
 	t.Cleanup(store.Close)
 	return &testFixture{srv: srv, agent: agent}
@@ -93,7 +99,84 @@ func TestHealthz(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Errorf("got %d, want 200", resp.StatusCode)
+		t.Errorf("status: got %d, want 200", resp.StatusCode)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode /healthz body: %v", err)
+	}
+	if body["status"] != "ok" {
+		t.Errorf(`status field: got %q, want "ok"`, body["status"])
+	}
+}
+
+func TestReadyz_Available(t *testing.T) {
+	store := memory.NewStore()
+	defer store.Close()
+	r := router.New(
+		&stubClassifier{intent: router.IntentComms},
+		map[router.Intent]router.Agent{},
+		store,
+		approval.NewMemoryStore(),
+	)
+	srv := httptest.NewServer(web.NewHandler(r, &stubReadiness{err: nil}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/readyz")
+	if err != nil {
+		t.Fatalf("GET /readyz: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status: got %d, want 200", resp.StatusCode)
+	}
+	var body map[string]string
+	json.NewDecoder(resp.Body).Decode(&body) //nolint:errcheck
+	if body["status"] != "ok" {
+		t.Errorf(`status field: got %q, want "ok"`, body["status"])
+	}
+}
+
+func TestReadyz_Unavailable(t *testing.T) {
+	store := memory.NewStore()
+	defer store.Close()
+	r := router.New(
+		&stubClassifier{intent: router.IntentComms},
+		map[router.Intent]router.Agent{},
+		store,
+		approval.NewMemoryStore(),
+	)
+	pingErr := errors.New("connection refused")
+	srv := httptest.NewServer(web.NewHandler(r, &stubReadiness{err: pingErr}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/readyz")
+	if err != nil {
+		t.Fatalf("GET /readyz: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status: got %d, want 503", resp.StatusCode)
+	}
+	var body map[string]string
+	json.NewDecoder(resp.Body).Decode(&body) //nolint:errcheck
+	if body["status"] != "unavailable" {
+		t.Errorf(`status field: got %q, want "unavailable"`, body["status"])
+	}
+	if body["reason"] == "" {
+		t.Error("reason field should be non-empty on 503")
+	}
+}
+
+func TestReadyz_NoChecker_AlwaysOK(t *testing.T) {
+	f := newFixture(t, router.IntentComms, "ok")
+	resp, err := http.Get(f.srv.URL + "/readyz")
+	if err != nil {
+		t.Fatalf("GET /readyz: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status: got %d, want 200 when no checker configured", resp.StatusCode)
 	}
 }
 
@@ -255,7 +338,7 @@ func TestChat_PanicRecovery(t *testing.T) {
 		store,
 		approval.NewMemoryStore(),
 	)
-	srv := httptest.NewServer(web.NewHandler(r))
+	srv := httptest.NewServer(web.NewHandler(r, nil))
 	defer srv.Close()
 
 	resp := post(t, srv, map[string]string{
@@ -280,7 +363,7 @@ func TestChat_UnknownIntent_NoError(t *testing.T) {
 		store,
 		approval.NewMemoryStore(),
 	)
-	srv := httptest.NewServer(web.NewHandler(r))
+	srv := httptest.NewServer(web.NewHandler(r, nil))
 	defer srv.Close()
 
 	resp := post(t, srv, map[string]string{

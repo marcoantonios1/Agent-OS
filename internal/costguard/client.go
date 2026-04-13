@@ -49,6 +49,25 @@ func New(baseURL, apiKey string) *Client {
 	}
 }
 
+// Ping checks whether the Costguard gateway is reachable by sending a GET to
+// its /healthz endpoint. Returns nil on a 2xx response, or a descriptive error.
+// The provided context controls the request timeout.
+func (c *Client) Ping(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/healthz", nil)
+	if err != nil {
+		return fmt.Errorf("costguard ping: build request: %w", err)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("costguard ping: %w", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("costguard ping: unexpected status %s", resp.Status)
+	}
+	return nil
+}
+
 // ── OpenAI wire types ─────────────────────────────────────────────────────────
 
 type oaiRequest struct {

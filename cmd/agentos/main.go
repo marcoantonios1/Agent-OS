@@ -2,9 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/marcoantonios1/Agent-OS/internal/app"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/builder"
@@ -35,7 +39,8 @@ func main() {
 
 	observability.Setup(cfg.LogLevel)
 
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	store := memory.NewStore()
 	defer store.Close()
@@ -52,13 +57,33 @@ func main() {
 	}
 
 	r := router.New(classifier, agents, store, approvals)
-	h := web.NewHandler(r)
+	h := web.NewHandler(r, llm)
 
-	slog.Info("Agent OS starting", "port", cfg.Port)
-	if err := http.ListenAndServe(":"+cfg.Port, h); err != nil {
-		slog.Error("server error", "error", err)
+	srv := &http.Server{
+		Addr:    ":" + cfg.Port,
+		Handler: h,
+	}
+
+	go func() {
+		slog.Info("Agent OS started", "port", cfg.Port)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("server error", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// Block until SIGINT or SIGTERM.
+	<-ctx.Done()
+	stop()
+
+	slog.Info("shutting down — draining in-flight requests")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("shutdown timeout exceeded", "error", err)
 		os.Exit(1)
 	}
+	slog.Info("shutdown complete")
 }
 
 // newEmailProvider returns a Gmail or Outlook EmailProvider based on which

@@ -24,6 +24,13 @@ type Dispatcher interface {
 	Route(ctx context.Context, msg types.InboundMessage) (types.OutboundMessage, error)
 }
 
+// ReadinessChecker reports whether all external dependencies are reachable.
+// *costguard.Client satisfies this interface. A nil ReadinessChecker makes
+// /readyz always return 200.
+type ReadinessChecker interface {
+	Ping(ctx context.Context) error
+}
+
 // chatRequest is the JSON body for POST /v1/chat.
 type chatRequest struct {
 	SessionID string `json:"session_id"`
@@ -45,20 +52,24 @@ type errorResponse struct {
 // Handler is the HTTP handler for the web chat channel.
 type Handler struct {
 	dispatcher Dispatcher
+	readiness  ReadinessChecker // may be nil
 	log        *slog.Logger
 	handler    http.Handler
 }
 
 // NewHandler registers all routes and wraps them with middleware.
-func NewHandler(d Dispatcher) *Handler {
+// checker is used by GET /readyz; pass nil to skip the external dependency check.
+func NewHandler(d Dispatcher, checker ReadinessChecker) *Handler {
 	h := &Handler{
 		dispatcher: d,
+		readiness:  checker,
 		log:        slog.Default(),
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat", h.chat)
 	mux.HandleFunc("GET /healthz", h.healthz)
+	mux.HandleFunc("GET /readyz", h.readyz)
 
 	// Middleware order (outermost first):
 	//   recovery → requestID → logging → mux
@@ -122,8 +133,25 @@ func (h *Handler) chat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) healthz(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("ok")) //nolint:errcheck
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (h *Handler) readyz(w http.ResponseWriter, r *http.Request) {
+	if h.readiness == nil {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if err := h.readiness.Ping(ctx); err != nil {
+		h.log.WarnContext(r.Context(), "readiness check failed", "error", err)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+			"status": "unavailable",
+			"reason": err.Error(),
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // --- middleware ---
