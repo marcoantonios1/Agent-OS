@@ -24,6 +24,13 @@ type Dispatcher interface {
 	Route(ctx context.Context, msg types.InboundMessage) (types.OutboundMessage, error)
 }
 
+// ReadinessChecker reports whether all external dependencies are reachable.
+// *costguard.Client satisfies this interface. A nil ReadinessChecker makes
+// /readyz always return 200.
+type ReadinessChecker interface {
+	Ping(ctx context.Context) error
+}
+
 // chatRequest is the JSON body for POST /v1/chat.
 type chatRequest struct {
 	SessionID string `json:"session_id"`
