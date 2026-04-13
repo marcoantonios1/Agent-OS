@@ -1,0 +1,231 @@
+// Package app provides application-level bootstrapping for Agent OS:
+// configuration loading, validation, and provider wiring.
+//
+// # Usage
+//
+//	cfg, err := app.Load(".env")
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//
+// Load reads from an optional .env file first, then from real environment
+// variables (which always take precedence). It validates required fields and
+// returns a descriptive error if any are missing.
+//
+// No code below main should call os.Getenv directly. Always pass a *Config.
+package app
+
+import (
+	"bufio"
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+)
+
+// Config holds all runtime configuration for Agent OS. Every field maps 1-to-1
+// with an environment variable documented in README.md.
+type Config struct {
+	// ── Server ────────────────────────────────────────────────────────────────
+
+	// Port is the TCP port the HTTP server listens on.
+	// Env: PORT (default: "9091")
+	Port string
+
+	// LogLevel sets the minimum slog log level.
+	// Env: LOG_LEVEL (default: "info"). Valid: debug, info, warn, error.
+	LogLevel string
+
+	// ── Costguard LLM gateway ─────────────────────────────────────────────────
+
+	// CostguardURL is the base URL of the Costguard gateway. Required.
+	// Env: COSTGUARD_URL
+	CostguardURL string
+
+	// CostguardAPIKey is the optional bearer token for the Costguard gateway.
+	// Env: COSTGUARD_API_KEY
+	CostguardAPIKey string
+
+	// ── Gmail ─────────────────────────────────────────────────────────────────
+
+	// Env: GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN
+	GmailClientID     string
+	GmailClientSecret string
+	GmailRefreshToken string
+
+	// ── Google Calendar ───────────────────────────────────────────────────────
+
+	// Env: GOOGLE_CAL_CLIENT_ID, GOOGLE_CAL_CLIENT_SECRET, GOOGLE_CAL_REFRESH_TOKEN
+	GoogleCalClientID     string
+	GoogleCalClientSecret string
+	GoogleCalRefreshToken string
+
+	// ── Outlook email ─────────────────────────────────────────────────────────
+
+	// Env: OUTLOOK_CLIENT_ID, OUTLOOK_CLIENT_SECRET (optional), OUTLOOK_REFRESH_TOKEN
+	OutlookClientID     string
+	OutlookClientSecret string
+	OutlookRefreshToken string
+
+	// ── Outlook Calendar ──────────────────────────────────────────────────────
+
+	// Env: OUTLOOK_CAL_CLIENT_ID, OUTLOOK_CAL_REFRESH_TOKEN
+	OutlookCalClientID     string
+	OutlookCalRefreshToken string
+
+	// ── Builder Agent ─────────────────────────────────────────────────────────
+
+	// BuilderSandboxDir is the root directory for all file and shell operations
+	// performed by the Builder Agent.
+	// Env: BUILDER_SANDBOX_DIR (default: "workspace")
+	BuilderSandboxDir string
+
+	// ── Session store ─────────────────────────────────────────────────────────
+
+	// SessionTTL is how long idle sessions are kept in memory before expiry.
+	// Env: SESSION_TTL (default: 24h). Accepts any value parseable by time.ParseDuration.
+	SessionTTL time.Duration
+}
+
+// Load reads configuration from the given .env file (if it exists) and then
+// from actual environment variables, which take precedence over the file.
+// Returns a descriptive error if any required field is missing.
+func Load(envFile string) (*Config, error) {
+	if err := loadDotEnv(envFile); err != nil {
+		return nil, fmt.Errorf("config: load env file %q: %w", envFile, err)
+	}
+
+	cfg := &Config{
+		Port:     envOr("PORT", "9091"),
+		LogLevel: envOr("LOG_LEVEL", "info"),
+
+		CostguardURL:    os.Getenv("COSTGUARD_URL"),
+		CostguardAPIKey: os.Getenv("COSTGUARD_API_KEY"),
+
+		GmailClientID:     os.Getenv("GMAIL_CLIENT_ID"),
+		GmailClientSecret: os.Getenv("GMAIL_CLIENT_SECRET"),
+		GmailRefreshToken: os.Getenv("GMAIL_REFRESH_TOKEN"),
+
+		GoogleCalClientID:     os.Getenv("GOOGLE_CAL_CLIENT_ID"),
+		GoogleCalClientSecret: os.Getenv("GOOGLE_CAL_CLIENT_SECRET"),
+		GoogleCalRefreshToken: os.Getenv("GOOGLE_CAL_REFRESH_TOKEN"),
+
+		OutlookClientID:     os.Getenv("OUTLOOK_CLIENT_ID"),
+		OutlookClientSecret: os.Getenv("OUTLOOK_CLIENT_SECRET"),
+		OutlookRefreshToken: os.Getenv("OUTLOOK_REFRESH_TOKEN"),
+
+		OutlookCalClientID:     os.Getenv("OUTLOOK_CAL_CLIENT_ID"),
+		OutlookCalRefreshToken: os.Getenv("OUTLOOK_CAL_REFRESH_TOKEN"),
+
+		BuilderSandboxDir: envOr("BUILDER_SANDBOX_DIR", "workspace"),
+		SessionTTL:        envDuration("SESSION_TTL", 24*time.Hour),
+	}
+
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// validate returns a descriptive error for any required field that is missing.
+func (c *Config) validate() error {
+	var missing []string
+	if c.CostguardURL == "" {
+		missing = append(missing, "COSTGUARD_URL is required — set it to your Costguard gateway base URL (e.g. http://localhost:8080)")
+	}
+	if len(missing) > 0 {
+		return errors.New("config: " + strings.Join(missing, "; "))
+	}
+	return nil
+}
+
+// GmailConfigured reports whether all three Gmail OAuth2 credentials are present.
+func (c *Config) GmailConfigured() bool {
+	return c.GmailClientID != "" && c.GmailClientSecret != "" && c.GmailRefreshToken != ""
+}
+
+// GoogleCalConfigured reports whether all Google Calendar credentials are present.
+func (c *Config) GoogleCalConfigured() bool {
+	return c.GoogleCalClientID != "" && c.GoogleCalClientSecret != "" && c.GoogleCalRefreshToken != ""
+}
+
+// OutlookEmailConfigured reports whether the minimum Outlook email credentials are present.
+func (c *Config) OutlookEmailConfigured() bool {
+	return c.OutlookClientID != "" && c.OutlookRefreshToken != ""
+}
+
+// OutlookCalConfigured reports whether Outlook Calendar credentials are present.
+func (c *Config) OutlookCalConfigured() bool {
+	return c.OutlookCalClientID != "" && c.OutlookCalRefreshToken != ""
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+func envOr(key, defaultVal string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultVal
+}
+
+func envDuration(key string, defaultVal time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultVal
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return defaultVal
+	}
+	return d
+}
+
+// loadDotEnv reads KEY=VALUE pairs from the file at path and registers each as
+// an environment variable via os.Setenv. Lines that are already set in the
+// process environment are skipped so that real env vars always win.
+//
+// Supported syntax:
+//   - Blank lines and lines starting with # are ignored.
+//   - Values may be quoted with " or '; the quotes are stripped.
+//   - Inline comments are NOT supported (# after a value is part of the value).
+//
+// If the file does not exist, loadDotEnv returns nil without error.
+func loadDotEnv(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // .env is optional
+		}
+		return err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+
+		// Strip surrounding single or double quotes.
+		if len(value) >= 2 {
+			if (value[0] == '"' && value[len(value)-1] == '"') ||
+				(value[0] == '\'' && value[len(value)-1] == '\'') {
+				value = value[1 : len(value)-1]
+			}
+		}
+
+		// Real env vars win — only set if not already present.
+		if os.Getenv(key) == "" {
+			os.Setenv(key, value) //nolint:errcheck
+		}
+	}
+	return scanner.Err()
+}
