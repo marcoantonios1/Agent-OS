@@ -9,6 +9,8 @@ package comms
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
@@ -99,6 +101,12 @@ func New(
 // conversation history and runs the agentic loop until the LLM produces a
 // final text response.
 func (a *Agent) Handle(ctx context.Context, req types.AgentRequest) (types.AgentResponse, error) {
+	slog.InfoContext(ctx, "agent_start",
+		"agent_id", string(agentID),
+		"session_id", req.SessionID,
+	)
+	start := time.Now()
+
 	// Build the message list: system prompt followed by the full conversation
 	// history (which already includes the current user message, added by the router).
 	msgs := make([]types.ConversationTurn, 0, len(req.History)+1)
@@ -116,6 +124,12 @@ func (a *Agent) Handle(ctx context.Context, req types.AgentRequest) (types.Agent
 	if err != nil {
 		return types.AgentResponse{}, fmt.Errorf("comms agent: %w", err)
 	}
+
+	slog.InfoContext(ctx, "agent_complete",
+		"agent_id", string(agentID),
+		"session_id", req.SessionID,
+		"latency_ms", time.Since(start).Milliseconds(),
+	)
 
 	return types.AgentResponse{
 		AgentID: agentID,

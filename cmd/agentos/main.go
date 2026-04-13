@@ -9,6 +9,7 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/agents/builder"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/comms"
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
+	"github.com/marcoantonios1/Agent-OS/internal/observability"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/code"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
@@ -28,6 +29,8 @@ func main() {
 	if port == "" {
 		port = "9091"
 	}
+
+	observability.Setup(os.Getenv("LOG_LEVEL"))
 
 	ctx := context.Background()
 

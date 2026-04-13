@@ -236,6 +236,11 @@ func (r *Router) dispatch(
 		return fallback, nil
 	}
 
+	r.log.InfoContext(ctx, "agent_dispatch",
+		"session_id", msg.SessionID,
+		"agent_id", string(intent),
+	)
+	start := time.Now()
 	resp, err := agent.Handle(ctx, types.AgentRequest{
 		SessionID: msg.SessionID,
 		UserID:    msg.UserID,
@@ -244,9 +249,21 @@ func (r *Router) dispatch(
 		Input:     msg.Text,
 		Metadata:  sessionMeta,
 	})
+	latency := time.Since(start).Milliseconds()
 	if err != nil {
+		r.log.WarnContext(ctx, "agent_error",
+			"session_id", msg.SessionID,
+			"agent_id", string(intent),
+			"latency_ms", latency,
+			"error", err,
+		)
 		return types.AgentResponse{}, fmt.Errorf("agent %s: %w", intent, err)
 	}
+	r.log.InfoContext(ctx, "agent_complete",
+		"session_id", msg.SessionID,
+		"agent_id", string(intent),
+		"latency_ms", latency,
+	)
 	return resp, nil
 }
 
