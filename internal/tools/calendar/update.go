@@ -58,11 +58,11 @@ func (t *UpdateTool) Definition() costguard.ToolDefinition {
 				},
 				"start": map[string]any{
 					"type":        "string",
-					"description": "New start time in RFC3339 format (omit to keep existing).",
+					"description": "New start time in RFC3339 with the user's local UTC offset (e.g. 2026-04-09T17:00:00+02:00). Never use Z. Omit to keep existing.",
 				},
 				"end": map[string]any{
 					"type":        "string",
-					"description": "New end time in RFC3339 format (omit to keep existing).",
+					"description": "New end time in RFC3339 with the user's local UTC offset (e.g. 2026-04-09T18:00:00+02:00). Never use Z. Omit to keep existing.",
 				},
 			},
 			"required": []string{"event_id"},
