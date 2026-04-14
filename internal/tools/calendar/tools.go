@@ -179,11 +179,11 @@ func (t *CreateTool) Definition() costguard.ToolDefinition {
 				},
 				"start": map[string]any{
 					"type":        "string",
-					"description": "Event start time in RFC3339 format.",
+					"description": "Event start time in RFC3339 with the user's local UTC offset (e.g. 2026-04-09T17:00:00+02:00). Never use Z unless the user is in UTC.",
 				},
 				"end": map[string]any{
 					"type":        "string",
-					"description": "Event end time in RFC3339 format.",
+					"description": "Event end time in RFC3339 with the user's local UTC offset (e.g. 2026-04-09T18:00:00+02:00). Never use Z unless the user is in UTC.",
 				},
 				"attendees": map[string]any{
 					"type":        "array",

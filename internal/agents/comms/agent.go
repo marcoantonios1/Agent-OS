@@ -22,7 +22,7 @@ import (
 
 const agentID = types.AgentID("comms")
 
-const systemPrompt = `You are the Comms Agent for Agent OS — a personal AI assistant that manages email and calendar on behalf of the user.
+const systemPromptBase = `You are the Comms Agent for Agent OS — a personal AI assistant that manages email and calendar on behalf of the user.
 
 ## Tools available
 - email_list      — list recent inbox emails (subject, sender, snippet)
@@ -44,7 +44,11 @@ const systemPrompt = `You are the Comms Agent for Agent OS — a personal AI ass
 3. Use tools to answer questions — never fabricate email or calendar data.
 4. email_draft is always safe to call; it saves a draft without sending.
 5. When summarising emails, be concise: sender, subject, and a one-line summary per email.
-6. Always use today's date context when interpreting relative times like "tomorrow".
+6. TIMEZONE RULE — critical for calendar events: the current local date/time and UTC offset
+   are provided in the ## Current time section below. ALL RFC3339 timestamps you generate
+   for calendar_create and calendar_update MUST use that same UTC offset (e.g. +02:00),
+   never Z (UTC) unless the offset shown is +00:00. Wrong timezone = event appears at the
+   wrong time in the user's calendar.
 
 ## Workflow patterns
 - "Check my emails"           → email_list, then summarise each
@@ -53,6 +57,17 @@ const systemPrompt = `You are the Comms Agent for Agent OS — a personal AI ass
 - "Send the email"            → email_send → show pending_approval → ask user to confirm
 - "What's on tomorrow?"       → calendar_list with tomorrow's date range
 - "Schedule a meeting"        → calendar_create → show pending_approval → ask user to confirm`
+
+// buildSystemPrompt returns the system prompt with the current local date/time
+// and UTC offset injected. This ensures the LLM uses the correct timezone when
+// constructing RFC3339 timestamps for calendar_create and calendar_update calls.
+func buildSystemPrompt() string {
+	now := time.Now()
+	return systemPromptBase + "\n\n## Current time\n" +
+		"Local date/time (use this UTC offset for ALL calendar timestamps): " +
+		now.Format(time.RFC3339) + "\n" +
+		"Day of week: " + now.Weekday().String()
+}
 
 // Agent implements the Comms Agent. It wires email and calendar tools into an
 // agentic loop and handles user requests via the standard Agent interface.
@@ -112,7 +127,7 @@ func (a *Agent) Handle(ctx context.Context, req types.AgentRequest) (types.Agent
 	msgs := make([]types.ConversationTurn, 0, len(req.History)+1)
 	msgs = append(msgs, types.ConversationTurn{
 		Role:    "system",
-		Content: systemPrompt,
+		Content: buildSystemPrompt(),
 	})
 	msgs = append(msgs, req.History...)
 
