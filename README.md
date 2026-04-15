@@ -123,24 +123,30 @@ Returns `200 ok`.
 
 ```
 cmd/
-  agentos/        — main server entrypoint
-  gmailauth/      — one-time Gmail OAuth2 setup
-  outlookauth/    — one-time Outlook device code setup
-  emailtest/      — manual email tool test harness
+  agentos/              — main server entrypoint
+  tool/
+    googleauth/         — one-time Google OAuth2 setup (Gmail + Calendar)
+    microsoftauth/      — one-time Microsoft device code setup (Mail + Calendar)
+    emailtest/          — manual email tool test harness
+    calendartest/       — manual calendar tool test harness
 internal/
-  types/          — shared message and session types
-  costguard/      — LLM client interface + HTTP implementation
-  sessions/       — SessionStore interface
-  memory/         — in-memory SessionStore implementation
-  router/         — intent classifier + Router Agent
-  channels/web/   — HTTP handler (web chat channel)
-  tools/          — Tool interface, ToolRegistry, agentic loop
-  tools/email/    — email tools + EmailProvider interface
-  tools/email/gmail/   — Gmail provider
-  tools/email/outlook/ — Outlook provider
+  types/                — shared message and session types
+  costguard/            — LLM client interface + HTTP implementation
+  sessions/             — SessionStore interface
+  memory/               — in-memory SessionStore implementation
+  router/               — intent classifier + Router Agent
+  channels/web/         — HTTP handler (web chat channel)
+  tools/                — Tool interface, ToolRegistry, agentic loop
+  tools/email/          — email tools + EmailProvider interface
+  tools/email/gmail/    — Gmail provider
+  tools/email/outlook/  — Outlook provider
+  tools/calendar/       — calendar tools + CalendarProvider interface
+  tools/calendar/google/  — Google Calendar provider
+  tools/calendar/outlook/ — Outlook Calendar provider
 docs/
-  email-setup.md  — Gmail and Outlook OAuth setup guide
+  email-setup.md        — Gmail and Outlook OAuth setup guide
+  calendar-setup.md     — Google and Outlook Calendar setup guide
 scripts/
-  test_api.sh     — HTTP API smoke tests
-  test_email.sh   — email tool tests
+  test_api.sh           — HTTP API smoke tests
+  test_email.sh         — email tool tests
 ```
