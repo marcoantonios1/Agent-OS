@@ -110,6 +110,9 @@ func Load(envFile string) (*Config, error) {
 		MicrosoftClientID:     os.Getenv("MICROSOFT_CLIENT_ID"),
 		MicrosoftRefreshToken: os.Getenv("MICROSOFT_REFRESH_TOKEN"),
 
+		SearchAPIKey:   os.Getenv("SEARCH_API_KEY"),
+		SearchProvider: envOr("SEARCH_PROVIDER", "brave"),
+
 		BuilderSandboxDir: envOr("BUILDER_SANDBOX_DIR", "workspace"),
 		SessionTTL:        envDuration("SESSION_TTL", 24*time.Hour),
 	}
@@ -130,6 +133,11 @@ func (c *Config) validate() error {
 		return errors.New("config: " + strings.Join(missing, "; "))
 	}
 	return nil
+}
+
+// SearchConfigured reports whether a search API key is present.
+func (c *Config) SearchConfigured() bool {
+	return c.SearchAPIKey != ""
 }
 
 // GoogleConfigured reports whether all Google OAuth2 credentials are present.
