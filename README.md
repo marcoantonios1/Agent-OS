@@ -84,6 +84,15 @@ Configuration is loaded at startup from `.env` (if present) and then from actual
 |---|---|---|---|
 | `BUILDER_SANDBOX_DIR` | No | `workspace` | Root directory for all file/shell operations by the Builder Agent |
 
+### Research Agent (web search)
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `SEARCH_API_KEY` | For web search | — | Brave Search API key — get one free at [brave.com/search/api](https://brave.com/search/api/) |
+| `SEARCH_PROVIDER` | No | `brave` | Search backend — only `"brave"` is supported today |
+
+If `SEARCH_API_KEY` is not set the server still starts, but the Research Agent falls back to LLM training knowledge without live web access.
+
 ### Google (Gmail + Google Calendar)
 
 A single refresh token covers both Gmail and Google Calendar. Run `go run ./cmd/tool/googleauth/` once — see [docs/email-setup.md](docs/email-setup.md) and [docs/calendar-setup.md](docs/calendar-setup.md) for full instructions.
@@ -143,6 +152,9 @@ internal/
   tools/calendar/       — calendar tools + CalendarProvider interface
   tools/calendar/google/  — Google Calendar provider
   tools/calendar/outlook/ — Outlook Calendar provider
+  tools/websearch/        — web_search + web_fetch tools + SearchProvider interface
+  tools/websearch/brave/  — Brave Search API implementation
+  agents/research/        — Research Agent (web search + synthesis)
 docs/
   email-setup.md        — Gmail and Outlook OAuth setup guide
   calendar-setup.md     — Google and Outlook Calendar setup guide

@@ -13,6 +13,7 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/app"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/builder"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/comms"
+	"github.com/marcoantonios1/Agent-OS/internal/agents/research"
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
@@ -26,7 +27,8 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/tools/email"
 	emailGmail "github.com/marcoantonios1/Agent-OS/internal/tools/email/gmail"
 	emailOutlook "github.com/marcoantonios1/Agent-OS/internal/tools/email/outlook"
-	"github.com/marcoantonios1/Agent-OS/internal/types"
+	"github.com/marcoantonios1/Agent-OS/internal/tools/websearch"
+	searchBrave "github.com/marcoantonios1/Agent-OS/internal/tools/websearch/brave"
 )
 
 func main() {
@@ -53,7 +55,7 @@ func main() {
 	agents := map[router.Intent]router.Agent{
 		router.IntentComms:    comms.New(llm, newEmailProvider(ctx, cfg), newCalendarProvider(ctx, cfg), approvals),
 		router.IntentBuilder:  builder.New(llm, store, newBuilderConfig(cfg)),
-		router.IntentResearch: &placeholderAgent{name: "research"},
+		router.IntentResearch: research.New(llm, newSearchProvider(cfg)),
 	}
 
 	r := router.New(classifier, agents, store, approvals)
@@ -84,6 +86,27 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("shutdown complete")
+}
+
+// newSearchProvider returns a SearchProvider based on configuration.
+// If SEARCH_API_KEY is not set, a no-op stub is returned and a warning is logged
+// (the research agent still starts — it just cannot reach the web).
+func newSearchProvider(cfg *app.Config) websearch.SearchProvider {
+	if !cfg.SearchConfigured() {
+		slog.Warn("SEARCH_API_KEY not set — web search tools disabled; research agent will use LLM knowledge only")
+		return &stubSearchProvider{}
+	}
+	slog.Info("web search enabled", "provider", cfg.SearchProvider)
+	return searchBrave.New(cfg.SearchAPIKey)
+}
+
+// stubSearchProvider is returned when no API key is configured.
+// It always returns an empty result set so the LLM can still respond from
+// its training knowledge without a hard failure.
+type stubSearchProvider struct{}
+
+func (s *stubSearchProvider) Search(_ context.Context, _ string, _ int) ([]websearch.SearchResult, error) {
+	return []websearch.SearchResult{}, nil
 }
 
 // newEmailProvider returns a Gmail or Outlook EmailProvider based on which
@@ -136,14 +159,4 @@ func newCalendarProvider(ctx context.Context, cfg *app.Config) calendar.Calendar
 func newBuilderConfig(cfg *app.Config) code.Config {
 	os.MkdirAll(cfg.BuilderSandboxDir, 0o755) //nolint:errcheck
 	return code.Config{SandboxDir: cfg.BuilderSandboxDir}
-}
-
-// placeholderAgent is used until real agent implementations are wired in.
-type placeholderAgent struct{ name string }
-
-func (p *placeholderAgent) Handle(_ context.Context, req types.AgentRequest) (types.AgentResponse, error) {
-	return types.AgentResponse{
-		AgentID: types.AgentID(p.name),
-		Output:  "[" + p.name + " agent] received: " + req.Input,
-	}, nil
 }
