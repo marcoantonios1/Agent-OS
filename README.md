@@ -152,6 +152,9 @@ internal/
   tools/calendar/       — calendar tools + CalendarProvider interface
   tools/calendar/google/  — Google Calendar provider
   tools/calendar/outlook/ — Outlook Calendar provider
+  tools/websearch/        — web_search + web_fetch tools + SearchProvider interface
+  tools/websearch/brave/  — Brave Search API implementation
+  agents/research/        — Research Agent (web search + synthesis)
 docs/
   email-setup.md        — Gmail and Outlook OAuth setup guide
   calendar-setup.md     — Google and Outlook Calendar setup guide
