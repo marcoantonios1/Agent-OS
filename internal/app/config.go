@@ -64,6 +64,16 @@ type Config struct {
 	MicrosoftClientID     string
 	MicrosoftRefreshToken string
 
+	// ── Research Agent ────────────────────────────────────────────────────────
+
+	// SearchAPIKey is the API key for the web search provider.
+	// Env: SEARCH_API_KEY
+	SearchAPIKey string
+
+	// SearchProvider selects the search backend.
+	// Env: SEARCH_PROVIDER (default: "brave"). Valid: "brave".
+	SearchProvider string
+
 	// ── Builder Agent ─────────────────────────────────────────────────────────
 
 	// BuilderSandboxDir is the root directory for all file and shell operations
