@@ -8,6 +8,7 @@ import (
 
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/email"
+	"github.com/marcoantonios1/Agent-OS/internal/tools/websearch"
 )
 
 // ── Workflow A: Comms — check emails and draft a reply ─────────────────────────
@@ -278,6 +279,155 @@ func TestWorkflowC_MixedCommsAndBuilder(t *testing.T) {
 	// Total LLM calls: 1 (classifier) + 3 (comms) + 1 (builder) = 5.
 	if got := stack.llm.callCount(); got != 5 {
 		t.Errorf("LLM call count = %d, want 5", got)
+	}
+}
+
+// ── Workflow D: Research ──────────────────────────────────────────────────────
+
+// TestWorkflowD_ResearchQuery verifies a pure research request:
+// classifier → research agent → web_search tool call → structured findings.
+func TestWorkflowD_ResearchQuery(t *testing.T) {
+	searchProv := &mockSearchProvider{results: []websearch.SearchResult{
+		{Title: "Padel Manager", URL: "https://padelmanager.com", Snippet: "Court booking and management for padel clubs."},
+		{Title: "Playtomic", URL: "https://playtomic.io", Snippet: "Leading sports facility booking platform including padel."},
+		{Title: "PadelZone", URL: "https://padelzone.app", Snippet: "Padel match-making and club management app."},
+	}}
+
+	// Call order:
+	//   1. Classifier → ["research"]
+	//   2. Research agent step 1 → web_search tool call
+	//   3. Research agent step 2 → final structured text (Findings / Sources / Caveats)
+	stack := newStack(stackConfig{
+		llmResponses: []costguard.CompletionResponse{
+			classifyResp("research"),
+			toolCallResp("tc-1", "web_search", `{"query":"Padel Zonal competitors padel apps","limit":5}`),
+			textResp("## Findings\nThe main competitors of Padel Zonal are Padel Manager, Playtomic, and PadelZone. Playtomic is the largest, operating across Europe with court booking and match-making features.\n\n## Sources\n- [Padel Manager](https://padelmanager.com) — court booking and club management\n- [Playtomic](https://playtomic.io) — leading multi-sport booking platform\n- [PadelZone](https://padelzone.app) — padel-focused match-making\n\n## Caveats\nMarket share data is not publicly available; rankings are based on search presence and app store reviews."),
+		},
+		searchProv: searchProv,
+	})
+	defer stack.Close()
+
+	resp, body, err := stack.post(chatRequest{
+		SessionID: "wf-d-1",
+		UserID:    "user-4",
+		Text:      "What are the main competitors of Padel Zonal?",
+	})
+	if err != nil {
+		t.Fatalf("POST /v1/chat: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+
+	// Response must be the structured research format.
+	if !strings.Contains(body.Text, "Findings") {
+		t.Errorf("response missing ## Findings section: %q", body.Text)
+	}
+	if !strings.Contains(body.Text, "Sources") {
+		t.Errorf("response missing ## Sources section: %q", body.Text)
+	}
+	if !strings.Contains(body.Text, "Caveats") {
+		t.Errorf("response missing ## Caveats section: %q", body.Text)
+	}
+
+	// At least one competitor should be named.
+	if !strings.Contains(body.Text, "Playtomic") && !strings.Contains(body.Text, "Padel Manager") {
+		t.Errorf("response should name at least one competitor, got: %q", body.Text)
+	}
+
+	// Session must be persisted.
+	sess, err := stack.store.Get("wf-d-1")
+	if err != nil {
+		t.Fatalf("session not found: %v", err)
+	}
+	if len(sess.History) < 2 {
+		t.Errorf("history length = %d, want >= 2", len(sess.History))
+	}
+
+	// 1 (classifier) + 2 (research agent: tool call + text) = 3 LLM calls.
+	if got := stack.llm.callCount(); got != 3 {
+		t.Errorf("LLM call count = %d, want 3", got)
+	}
+}
+
+// TestWorkflowD_ResearchAndBuilder_Mixed verifies a compound ["research","builder"]
+// request: research findings appear first, then builder clarifying questions.
+func TestWorkflowD_ResearchAndBuilder_Mixed(t *testing.T) {
+	searchProv := &mockSearchProvider{results: []websearch.SearchResult{
+		{Title: "Playtomic", URL: "https://playtomic.io", Snippet: "Multi-sport booking app with strong padel presence."},
+		{Title: "PadelZone", URL: "https://padelzone.app", Snippet: "Padel-specific match-making."},
+	}}
+
+	// Call order:
+	//   1. Classifier → ["research", "builder"]
+	//   2. Research agent step 1 → web_search tool call
+	//   3. Research agent step 2 → structured findings text
+	//   4. Builder agent step 1 → clarifying questions (requirements phase)
+	stack := newStack(stackConfig{
+		llmResponses: []costguard.CompletionResponse{
+			classifyResp("research", "builder"),
+			toolCallResp("tc-1", "web_search", `{"query":"padel apps competitors market","limit":5}`),
+			textResp("## Findings\nExisting padel apps include Playtomic (market leader) and PadelZone (niche match-making). Key features are court booking, match-making, and club management.\n\n## Sources\n- [Playtomic](https://playtomic.io) — market leader in Europe\n- [PadelZone](https://padelzone.app) — padel-focused niche player\n\n## Caveats\nNone."),
+			textResp("Great — I can help you build a padel app! A few questions before I write a spec:\n\n1. Target platform: iOS, Android, or Web?\n2. Core feature: court booking, match-making, or both?\n3. Do you need club management tools or is this player-facing only?"),
+		},
+		searchProv: searchProv,
+	})
+	defer stack.Close()
+
+	resp, body, err := stack.post(chatRequest{
+		SessionID: "wf-d-2",
+		UserID:    "user-5",
+		Text:      "Research padel apps then build me one",
+	})
+	if err != nil {
+		t.Fatalf("POST /v1/chat: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+
+	// Both agent sections must be present.
+	if !strings.Contains(body.Text, "[research]") {
+		t.Errorf("response missing [research] label: %q", body.Text)
+	}
+	if !strings.Contains(body.Text, "[builder]") {
+		t.Errorf("response missing [builder] label: %q", body.Text)
+	}
+
+	// The two sections must be separated by the compound divider.
+	if !strings.Contains(body.Text, "---") {
+		t.Errorf("compound response must contain --- separator, got: %q", body.Text)
+	}
+
+	// [research] must come before [builder] — matches the user's stated order.
+	researchIdx := strings.Index(body.Text, "[research]")
+	builderIdx := strings.Index(body.Text, "[builder]")
+	if researchIdx < 0 || builderIdx < 0 {
+		t.Fatalf("expected both [research] and [builder] labels, got: %q", body.Text)
+	}
+	if researchIdx >= builderIdx {
+		t.Errorf("[research] section (idx %d) must appear before [builder] (idx %d)", researchIdx, builderIdx)
+	}
+
+	// Research section must contain structured findings.
+	if !strings.Contains(body.Text, "Findings") {
+		t.Errorf("research section missing ## Findings: %q", body.Text)
+	}
+	if !strings.Contains(body.Text, "Sources") {
+		t.Errorf("research section missing ## Sources: %q", body.Text)
+	}
+
+	// Builder section must contain clarifying questions.
+	questionCount := strings.Count(body.Text, "?")
+	if questionCount < 2 {
+		t.Errorf("builder section should have >= 2 clarifying questions, found %d in: %q", questionCount, body.Text)
+	}
+
+	// 1 (classifier) + 2 (research: tool call + text) + 1 (builder) = 4 LLM calls.
+	if got := stack.llm.callCount(); got != 4 {
+		t.Errorf("LLM call count = %d, want 4", got)
 	}
 }
 

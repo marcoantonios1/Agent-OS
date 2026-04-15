@@ -1,6 +1,6 @@
-// Package integration contains end-to-end tests for the three core MVP workflows.
+// Package integration contains end-to-end tests for the four core MVP workflows.
 // The full HTTP stack is spun up via httptest.Server; external dependencies
-// (LLM, email, calendar) are replaced with lightweight in-process mocks.
+// (LLM, email, calendar, search) are replaced with lightweight in-process mocks.
 package integration
 
 import (
@@ -15,6 +15,7 @@ import (
 
 	"github.com/marcoantonios1/Agent-OS/internal/agents/builder"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/comms"
+	"github.com/marcoantonios1/Agent-OS/internal/agents/research"
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
@@ -23,6 +24,8 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/tools/calendar"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/code"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/email"
+	"github.com/marcoantonios1/Agent-OS/internal/tools"
+	"github.com/marcoantonios1/Agent-OS/internal/tools/websearch"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
 
@@ -165,13 +168,30 @@ func (m *mockCalendarProvider) Update(_ context.Context, in calendar.UpdateEvent
 	return nil, fmt.Errorf("mockCalendarProvider: event %q not found", in.EventID)
 }
 
+// ── mockSearchProvider ────────────────────────────────────────────────────────
+
+// mockSearchProvider is a deterministic, in-memory SearchProvider for tests.
+type mockSearchProvider struct {
+	results []websearch.SearchResult
+}
+
+func (m *mockSearchProvider) Search(_ context.Context, _ string, _ int) ([]websearch.SearchResult, error) {
+	return m.results, nil
+}
+
+// newWebSearchRegistry builds a ToolRegistry backed by the given provider.
+// Mirrors the helper in main.go so tests exercise the same wiring.
+func newWebSearchRegistry(prov websearch.SearchProvider) *tools.ToolRegistry {
+	return websearch.NewWebSearchRegistry(prov)
+}
+
 // ── testStack ─────────────────────────────────────────────────────────────────
 
 // testStack holds the full HTTP test stack for one scenario.
 type testStack struct {
-	srv      *httptest.Server
-	store    *memory.Store
-	llm      *scriptedLLM
+	srv       *httptest.Server
+	store     *memory.Store
+	llm       *scriptedLLM
 	emailProv *mockEmailProvider
 }
 
@@ -180,6 +200,7 @@ type stackConfig struct {
 	llmResponses []costguard.CompletionResponse
 	emailProv    *mockEmailProvider
 	calProv      calendar.CalendarProvider
+	searchProv   websearch.SearchProvider // nil → stub (empty results)
 	sandboxDir   string
 }
 
@@ -196,9 +217,15 @@ func newStack(cfg stackConfig) *testStack {
 		sandboxDir = "testdata/sandbox"
 	}
 
+	searchProv := cfg.searchProv
+	if searchProv == nil {
+		searchProv = &mockSearchProvider{} // empty results stub
+	}
+
 	agents := map[router.Intent]router.Agent{
-		router.IntentComms:   comms.New(llm, cfg.emailProv, cfg.calProv, approvals),
-		router.IntentBuilder: builder.New(llm, store, code.Config{SandboxDir: sandboxDir}),
+		router.IntentComms:    comms.New(llm, cfg.emailProv, cfg.calProv, approvals),
+		router.IntentBuilder:  builder.New(llm, store, code.Config{SandboxDir: sandboxDir}),
+		router.IntentResearch: research.New(llm, newWebSearchRegistry(searchProv)),
 	}
 
 	r := router.New(classifier, agents, store, approvals)
