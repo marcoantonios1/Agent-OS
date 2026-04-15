@@ -140,7 +140,7 @@ func (a *Agent) Handle(ctx context.Context, req types.AgentRequest) (types.Agent
 	msgs = append(msgs, req.History...)
 
 	output, err := a.loop.Run(ctx, costguard.CompletionRequest{
-		Model:     "llama3.2",
+		Model:     "gemma4:26b",
 		Messages:  msgs,
 		MaxTokens: 4096,
 	})

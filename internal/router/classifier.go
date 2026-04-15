@@ -45,11 +45,19 @@ history) and return a JSON object with an "intents" array.
 
 The valid intent values are:
 
-- "comms"    – General conversation, casual chat, sending or drafting emails,
-               scheduling messages, reminders, day-to-day personal assistance.
+- "comms"    – Anything involving the user's own emails or calendar.
+               This includes: reading, listing, searching, summarising, drafting,
+               sending emails; checking, creating, or updating calendar events;
+               reminders and scheduling.
+               The key signal: the user is asking about THEIR inbox or THEIR calendar.
                Examples: "Send Alice an email about the meeting",
+                         "Check my latest emails",
+                         "Summarise the emails I received today",
+                         "What are my last 5 emails?",
+                         "Read that email from Bob",
                          "Remind me to call the dentist",
-                         "What's on my calendar today?"
+                         "What's on my calendar today?",
+                         "Schedule a meeting with Alice tomorrow at 3pm"
 
 - "builder"  – Writing, editing, reviewing, or debugging code; creating scripts,
                configuration files, or any software artefact; explaining how
@@ -58,11 +66,14 @@ The valid intent values are:
                          "Why is my Go build failing?",
                          "Refactor this function to use generics"
 
-- "research" – Searching for information, summarising articles or documents,
-               answering factual questions, comparing options, analysing data.
+- "research" – Searching the web or external sources for information; summarising
+               articles, news, or documents found online; answering factual questions
+               about the world; comparing external options or analysing public data.
+               NOT for emails or calendar — those are always "comms".
                Examples: "What are the main differences between REST and GraphQL?",
                          "Summarise the latest news about climate change",
-                         "Which database is better for time-series data?"
+                         "Which database is better for time-series data?",
+                         "Search for recent papers on LLMs"
 
 - "unknown"  – The message is ambiguous, off-topic, or cannot be reliably
                classified into any of the above categories.
@@ -77,6 +88,10 @@ Examples:
 - "Research GraphQL vs REST, then write me an implementation"
   → {"intents": ["research", "builder"]}
 - "Send an email to Alice"
+  → {"intents": ["comms"]}
+- "Check my emails and summarise them"
+  → {"intents": ["comms"]}
+- "What are my last 5 emails?"
   → {"intents": ["comms"]}
 
 Respond with ONLY valid JSON. No markdown, no explanation, no extra keys.
