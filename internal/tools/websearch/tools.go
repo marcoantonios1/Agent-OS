@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/tools"
 )
 
@@ -18,7 +19,6 @@ const (
 	maxSearchLimit     = 10
 	defaultMaxChars    = 4000
 	maxFetchChars      = 16000
-	fetchTimeout       = 15 // seconds applied by the caller's context
 )
 
 // NewWebSearchRegistry returns a ToolRegistry with web_search and web_fetch
@@ -42,8 +42,8 @@ type SearchTool struct {
 	provider SearchProvider
 }
 
-func (t *SearchTool) Definition() tools.ToolDefinition {
-	return tools.ToolDefinition{
+func (t *SearchTool) Definition() costguard.ToolDefinition {
+	return costguard.ToolDefinition{
 		Name:        "web_search",
 		Description: "Search the web for current information. Returns a list of results with title, URL, and a short snippet.",
 		Parameters: map[string]any{
@@ -102,8 +102,8 @@ type FetchTool struct {
 	client *http.Client
 }
 
-func (t *FetchTool) Definition() tools.ToolDefinition {
-	return tools.ToolDefinition{
+func (t *FetchTool) Definition() costguard.ToolDefinition {
+	return costguard.ToolDefinition{
 		Name:        "web_fetch",
 		Description: "Fetch a URL and return its readable text content. HTML tags are stripped. Use this to read the full content of a search result.",
 		Parameters: map[string]any{
@@ -155,7 +155,8 @@ func (t *FetchTool) Execute(ctx context.Context, input json.RawMessage) (string,
 		return "", fmt.Errorf("web_fetch: server returned %s", resp.Status)
 	}
 
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxChars)*6)) // read more than needed pre-strip
+	// Read up to 6× maxChars bytes pre-strip (HTML is verbose).
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxChars)*6))
 	if err != nil {
 		return "", fmt.Errorf("web_fetch: read body: %w", err)
 	}
@@ -168,9 +169,11 @@ func (t *FetchTool) Execute(ctx context.Context, input json.RawMessage) (string,
 // ── HTML stripping ────────────────────────────────────────────────────────────
 
 var (
-	reTag      = regexp.MustCompile(`<[^>]+>`)
-	reScript   = regexp.MustCompile(`(?is)<(script|style)[^>]*>.*?</(script|style)>`)
-	reEntities = strings.NewReplacer(
+	reScript     = regexp.MustCompile(`(?is)<(script|style)[^>]*>.*?</(script|style)>`)
+	reTag        = regexp.MustCompile(`<[^>]+>`)
+	reWhitespace = regexp.MustCompile(`[ \t]+`)
+	reNewlines   = regexp.MustCompile(`\n{3,}`)
+	htmlEntities = strings.NewReplacer(
 		"&amp;", "&",
 		"&lt;", "<",
 		"&gt;", ">",
@@ -178,18 +181,15 @@ var (
 		"&#39;", "'",
 		"&nbsp;", " ",
 	)
-	reWhitespace = regexp.MustCompile(`[ \t]+`)
-	reNewlines   = regexp.MustCompile(`\n{3,}`)
 )
 
 // stripHTML removes script/style blocks, HTML tags, decodes common entities,
 // and normalises whitespace into readable plain text.
 func stripHTML(html string) string {
-	text := reScript.ReplaceAllString(html, "")
+	text := reScript.ReplaceAllString(html, " ")
 	text = reTag.ReplaceAllString(text, " ")
-	text = reEntities.Replace(text)
+	text = htmlEntities.Replace(text)
 	text = reWhitespace.ReplaceAllString(text, " ")
-	// Normalise line endings and collapse excessive blank lines.
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	text = strings.ReplaceAll(text, "\r", "\n")
 	text = reNewlines.ReplaceAllString(text, "\n\n")
@@ -201,9 +201,9 @@ func truncateChars(s string, n int) string {
 	if utf8.RuneCountInString(s) <= n {
 		return s
 	}
-	runes := []rune(s)
-	return string(runes[:n]) + "…"
+	return string([]rune(s)[:n]) + "…"
 }
 
-// ToolDefinition alias so tools.go compiles without importing costguard directly.
-type ToolDefinition = tools.ToolDefinition
+// Compile-time checks.
+var _ tools.Tool = (*SearchTool)(nil)
+var _ tools.Tool = (*FetchTool)(nil)
