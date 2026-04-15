@@ -23,6 +23,7 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/tools/calendar"
 	calendarGoogle "github.com/marcoantonios1/Agent-OS/internal/tools/calendar/google"
 	calendarOutlook "github.com/marcoantonios1/Agent-OS/internal/tools/calendar/outlook"
+	"github.com/marcoantonios1/Agent-OS/internal/tools"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/code"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/email"
 	emailGmail "github.com/marcoantonios1/Agent-OS/internal/tools/email/gmail"
@@ -55,7 +56,7 @@ func main() {
 	agents := map[router.Intent]router.Agent{
 		router.IntentComms:    comms.New(llm, newEmailProvider(ctx, cfg), newCalendarProvider(ctx, cfg), approvals),
 		router.IntentBuilder:  builder.New(llm, store, newBuilderConfig(cfg)),
-		router.IntentResearch: research.New(llm, newSearchProvider(cfg)),
+		router.IntentResearch: research.New(llm, newWebSearchRegistry(cfg)),
 	}
 
 	r := router.New(classifier, agents, store, approvals)
@@ -88,16 +89,16 @@ func main() {
 	slog.Info("shutdown complete")
 }
 
-// newSearchProvider returns a SearchProvider based on configuration.
-// If SEARCH_API_KEY is not set, a no-op stub is returned and a warning is logged
-// (the research agent still starts — it just cannot reach the web).
-func newSearchProvider(cfg *app.Config) websearch.SearchProvider {
+// newWebSearchRegistry builds a ToolRegistry containing web_search and web_fetch.
+// If SEARCH_API_KEY is not set a stub provider is used and a warning is logged —
+// the research agent still starts but has no live web access.
+func newWebSearchRegistry(cfg *app.Config) *tools.ToolRegistry {
 	if !cfg.SearchConfigured() {
 		slog.Warn("SEARCH_API_KEY not set — web search tools disabled; research agent will use LLM knowledge only")
-		return &stubSearchProvider{}
+		return websearch.NewWebSearchRegistry(&stubSearchProvider{})
 	}
 	slog.Info("web search enabled", "provider", cfg.SearchProvider)
-	return searchBrave.New(cfg.SearchAPIKey)
+	return websearch.NewWebSearchRegistry(searchBrave.New(cfg.SearchAPIKey))
 }
 
 // stubSearchProvider is returned when no API key is configured.
