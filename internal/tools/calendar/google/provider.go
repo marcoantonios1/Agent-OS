@@ -32,16 +32,16 @@ type Provider struct {
 
 // NewFromEnv creates a Provider from environment variables:
 //
-//	GOOGLE_CAL_CLIENT_ID      — OAuth2 client ID
-//	GOOGLE_CAL_CLIENT_SECRET  — OAuth2 client secret
-//	GOOGLE_CAL_REFRESH_TOKEN  — long-lived refresh token (from googlecalauth)
+//	GOOGLE_CLIENT_ID      — OAuth2 client ID
+//	GOOGLE_CLIENT_SECRET  — OAuth2 client secret
+//	GOOGLE_REFRESH_TOKEN  — long-lived refresh token (from googleauth)
 func NewFromEnv(ctx context.Context) (*Provider, error) {
-	clientID := os.Getenv("GOOGLE_CAL_CLIENT_ID")
-	clientSecret := os.Getenv("GOOGLE_CAL_CLIENT_SECRET")
-	refreshToken := os.Getenv("GOOGLE_CAL_REFRESH_TOKEN")
+	clientID := os.Getenv("GOOGLE_CLIENT_ID")
+	clientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
+	refreshToken := os.Getenv("GOOGLE_REFRESH_TOKEN")
 
 	if clientID == "" || clientSecret == "" || refreshToken == "" {
-		return nil, fmt.Errorf("google calendar: GOOGLE_CAL_CLIENT_ID, GOOGLE_CAL_CLIENT_SECRET, and GOOGLE_CAL_REFRESH_TOKEN must all be set")
+		return nil, fmt.Errorf("google calendar: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REFRESH_TOKEN must all be set")
 	}
 	return New(ctx, clientID, clientSecret, refreshToken)
 }

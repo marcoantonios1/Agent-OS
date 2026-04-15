@@ -89,16 +89,16 @@ func main() {
 // newEmailProvider returns a Gmail or Outlook EmailProvider based on which
 // credentials are present in cfg, or nil if neither is configured.
 func newEmailProvider(ctx context.Context, cfg *app.Config) email.EmailProvider {
-	if cfg.GmailConfigured() {
-		p, err := emailGmail.New(ctx, cfg.GmailClientID, cfg.GmailClientSecret, cfg.GmailRefreshToken)
+	if cfg.GoogleConfigured() {
+		p, err := emailGmail.New(ctx, cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleRefreshToken)
 		if err != nil {
 			slog.Warn("Gmail provider unavailable", "error", err)
 			return nil
 		}
 		return p
 	}
-	if cfg.OutlookEmailConfigured() {
-		p, err := emailOutlook.New(ctx, cfg.OutlookClientID, cfg.OutlookClientSecret, cfg.OutlookRefreshToken)
+	if cfg.MicrosoftConfigured() {
+		p, err := emailOutlook.New(ctx, cfg.MicrosoftClientID, "", cfg.MicrosoftRefreshToken)
 		if err != nil {
 			slog.Warn("Outlook email provider unavailable", "error", err)
 			return nil
@@ -112,16 +112,16 @@ func newEmailProvider(ctx context.Context, cfg *app.Config) email.EmailProvider 
 // newCalendarProvider returns a Google or Outlook CalendarProvider based on
 // which credentials are present in cfg, or nil if neither is configured.
 func newCalendarProvider(ctx context.Context, cfg *app.Config) calendar.CalendarProvider {
-	if cfg.GoogleCalConfigured() {
-		p, err := calendarGoogle.New(ctx, cfg.GoogleCalClientID, cfg.GoogleCalClientSecret, cfg.GoogleCalRefreshToken)
+	if cfg.GoogleConfigured() {
+		p, err := calendarGoogle.New(ctx, cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleRefreshToken)
 		if err != nil {
 			slog.Warn("Google Calendar provider unavailable", "error", err)
 			return nil
 		}
 		return p
 	}
-	if cfg.OutlookCalConfigured() {
-		p, err := calendarOutlook.New(ctx, cfg.OutlookCalClientID, cfg.OutlookCalRefreshToken)
+	if cfg.MicrosoftConfigured() {
+		p, err := calendarOutlook.New(ctx, cfg.MicrosoftClientID, cfg.MicrosoftRefreshToken)
 		if err != nil {
 			slog.Warn("Outlook Calendar provider unavailable", "error", err)
 			return nil

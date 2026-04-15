@@ -39,17 +39,16 @@ type Provider struct {
 
 // NewFromEnv creates a Provider reading credentials from environment variables:
 //
-//	OUTLOOK_CLIENT_ID     — Azure app client ID
-//	OUTLOOK_REFRESH_TOKEN — long-lived refresh token (obtained via outlookauth)
-//	OUTLOOK_CLIENT_SECRET — optional; not required for device code flow apps
+//	MICROSOFT_CLIENT_ID     — Azure app client ID
+//	MICROSOFT_REFRESH_TOKEN — long-lived refresh token (obtained via microsoftauth)
 func NewFromEnv(ctx context.Context) (*Provider, error) {
-	clientID := os.Getenv("OUTLOOK_CLIENT_ID")
-	refreshToken := os.Getenv("OUTLOOK_REFRESH_TOKEN")
+	clientID := os.Getenv("MICROSOFT_CLIENT_ID")
+	refreshToken := os.Getenv("MICROSOFT_REFRESH_TOKEN")
 
 	if clientID == "" || refreshToken == "" {
-		return nil, fmt.Errorf("outlook: OUTLOOK_CLIENT_ID and OUTLOOK_REFRESH_TOKEN must be set")
+		return nil, fmt.Errorf("outlook: MICROSOFT_CLIENT_ID and MICROSOFT_REFRESH_TOKEN must be set")
 	}
-	return New(ctx, clientID, os.Getenv("OUTLOOK_CLIENT_SECRET"), refreshToken)
+	return New(ctx, clientID, "", refreshToken)
 }
 
 // New creates a Provider from explicit credentials.

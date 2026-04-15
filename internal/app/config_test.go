@@ -177,42 +177,25 @@ func TestLoad_SessionTTL_Parsed(t *testing.T) {
 func TestConfig_ProviderHelpers(t *testing.T) {
 	base := &app.Config{} // all empty
 
-	if base.GmailConfigured() {
-		t.Error("GmailConfigured() should be false when credentials are missing")
+	if base.GoogleConfigured() {
+		t.Error("GoogleConfigured() should be false when credentials are missing")
 	}
-	if base.GoogleCalConfigured() {
-		t.Error("GoogleCalConfigured() should be false when credentials are missing")
-	}
-	if base.OutlookEmailConfigured() {
-		t.Error("OutlookEmailConfigured() should be false when credentials are missing")
-	}
-	if base.OutlookCalConfigured() {
-		t.Error("OutlookCalConfigured() should be false when credentials are missing")
+	if base.MicrosoftConfigured() {
+		t.Error("MicrosoftConfigured() should be false when credentials are missing")
 	}
 
 	full := &app.Config{
-		GmailClientID:          "id",
-		GmailClientSecret:      "secret",
-		GmailRefreshToken:      "token",
-		GoogleCalClientID:      "id",
-		GoogleCalClientSecret:  "secret",
-		GoogleCalRefreshToken:  "token",
-		OutlookClientID:        "id",
-		OutlookRefreshToken:    "token",
-		OutlookCalClientID:     "id",
-		OutlookCalRefreshToken: "token",
+		GoogleClientID:        "id",
+		GoogleClientSecret:    "secret",
+		GoogleRefreshToken:    "token",
+		MicrosoftClientID:     "id",
+		MicrosoftRefreshToken: "token",
 	}
-	if !full.GmailConfigured() {
-		t.Error("GmailConfigured() should be true when all credentials are set")
+	if !full.GoogleConfigured() {
+		t.Error("GoogleConfigured() should be true when all credentials are set")
 	}
-	if !full.GoogleCalConfigured() {
-		t.Error("GoogleCalConfigured() should be true when all credentials are set")
-	}
-	if !full.OutlookEmailConfigured() {
-		t.Error("OutlookEmailConfigured() should be true when credentials are set")
-	}
-	if !full.OutlookCalConfigured() {
-		t.Error("OutlookCalConfigured() should be true when credentials are set")
+	if !full.MicrosoftConfigured() {
+		t.Error("MicrosoftConfigured() should be true when credentials are set")
 	}
 }
 

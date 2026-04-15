@@ -1,5 +1,5 @@
-// outlookcalauth is a one-time helper that uses the OAuth2 device code flow to
-// obtain a refresh token for Outlook Calendar access.
+// microsoftauth is a one-time helper that uses the OAuth2 device code flow to
+// obtain a single refresh token covering both Outlook Mail and Outlook Calendar.
 //
 // No redirect URIs, no local server, no copy-pasting codes from the URL bar.
 // You get a short human-readable code, visit a Microsoft URL, sign in, and
@@ -7,7 +7,7 @@
 //
 // Usage:
 //
-//	OUTLOOK_CAL_CLIENT_ID=<id> go run ./cmd/outlookcalauth/
+//	MICROSOFT_CLIENT_ID=<id> go run ./cmd/tool/microsoftauth/
 package main
 
 import (
@@ -26,14 +26,20 @@ var microsoftEndpoint = oauth2.Endpoint{
 }
 
 func main() {
-	clientID := os.Getenv("OUTLOOK_CAL_CLIENT_ID")
+	clientID := os.Getenv("MICROSOFT_CLIENT_ID")
 	if clientID == "" {
-		log.Fatal("Set OUTLOOK_CAL_CLIENT_ID before running this tool.")
+		log.Fatal("Set MICROSOFT_CLIENT_ID before running this tool.")
 	}
 
 	cfg := &oauth2.Config{
 		ClientID: clientID,
-		Scopes:   []string{"offline_access", "Calendars.Read", "Calendars.ReadWrite"},
+		Scopes: []string{
+			"offline_access",
+			"Mail.Read",
+			"Mail.ReadWrite",
+			"Calendars.Read",
+			"Calendars.ReadWrite",
+		},
 		Endpoint: microsoftEndpoint,
 	}
 
@@ -46,7 +52,7 @@ func main() {
 	}
 
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	fmt.Println("  Outlook Calendar OAuth2 Setup — Device Code Flow")
+	fmt.Println("  Microsoft OAuth2 Setup (Mail + Calendar)")
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Println()
 	fmt.Println("1. Open this URL in your browser:")
@@ -72,9 +78,10 @@ func main() {
 	fmt.Println("  Success! Add these to your .env file:")
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Println()
-	fmt.Printf("OUTLOOK_CAL_CLIENT_ID=%s\n", clientID)
-	fmt.Printf("OUTLOOK_CAL_REFRESH_TOKEN=%s\n", token.RefreshToken)
+	fmt.Printf("MICROSOFT_CLIENT_ID=%s\n", clientID)
+	fmt.Printf("MICROSOFT_REFRESH_TOKEN=%s\n", token.RefreshToken)
 	fmt.Println()
+	fmt.Println("This single token grants access to both Outlook Mail and Calendar.")
 	fmt.Println("No client secret needed with device code flow.")
-	fmt.Println("Keep the refresh token secret — it grants read/write access to your Outlook Calendar.")
+	fmt.Println("Keep the refresh token secret.")
 }
