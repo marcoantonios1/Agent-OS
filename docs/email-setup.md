@@ -16,8 +16,10 @@ Agent OS supports two email providers out of the box: **Gmail** and **Outlook** 
    - `https://www.googleapis.com/auth/calendar.readonly`
    - `https://www.googleapis.com/auth/calendar.events`
    - Add your Gmail address as a test user
-4. **Credentials → Create Credentials → OAuth client ID** → Desktop app
+4. **Credentials → Create Credentials → OAuth client ID** → **Desktop app**
 5. Copy the **Client ID** and **Client Secret**
+
+> **Note:** Google's Desktop app type automatically allows `http://127.0.0.1` as a redirect URI, which is what the auth helper uses. No manual redirect URI configuration is needed.
 
 ### 2. Get your refresh token
 

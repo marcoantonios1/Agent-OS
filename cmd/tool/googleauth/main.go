@@ -1,18 +1,21 @@
 // googleauth is a one-time helper that walks you through the Google OAuth2 flow
 // and prints the single refresh token that covers both Gmail and Google Calendar.
 //
+// It starts a temporary localhost callback server so you never need to
+// copy-paste an authorisation code.
+//
 // Usage:
 //
 //	GOOGLE_CLIENT_ID=<id> GOOGLE_CLIENT_SECRET=<secret> go run ./cmd/tool/googleauth/
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
 	"os"
-	"strings"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -27,6 +30,14 @@ func main() {
 		log.Fatal("Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET before running this tool.")
 	}
 
+	// Pick a free port for the local callback server.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		log.Fatalf("Could not bind a local port: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	redirectURL := fmt.Sprintf("http://127.0.0.1:%d/callback", port)
+
 	cfg := &oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
@@ -37,10 +48,10 @@ func main() {
 			googlecal.CalendarEventsScope,
 		},
 		Endpoint:    google.Endpoint,
-		RedirectURL: "urn:ietf:wg:oauth:2.0:oob", // copy-paste flow, no local server needed
+		RedirectURL: redirectURL,
 	}
 
-	url := cfg.AuthCodeURL("state", oauth2.AccessTypeOffline, oauth2.ApprovalForce)
+	authURL := cfg.AuthCodeURL("state", oauth2.AccessTypeOffline, oauth2.ApprovalForce)
 
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Println("  Google OAuth2 Setup (Gmail + Calendar)")
@@ -48,19 +59,45 @@ func main() {
 	fmt.Println()
 	fmt.Println("1. Open this URL in your browser:")
 	fmt.Println()
-	fmt.Println("  ", url)
+	fmt.Println("  ", authURL)
 	fmt.Println()
 	fmt.Println("2. Sign in with your Google account and click Allow.")
-	fmt.Println("3. Copy the authorisation code shown and paste it below.")
+	fmt.Println("   The token will be captured automatically — no copy-pasting needed.")
 	fmt.Println()
-	fmt.Print("Authorisation code: ")
+	fmt.Printf("Waiting for callback on http://127.0.0.1:%d ...\n", port)
 
-	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Scan()
-	code := strings.TrimSpace(scanner.Text())
-	if code == "" {
-		log.Fatal("No code provided.")
+	// codeCh receives the authorisation code from the callback handler.
+	codeCh := make(chan string, 1)
+	errCh := make(chan error, 1)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+		code := r.URL.Query().Get("code")
+		if code == "" {
+			errMsg := r.URL.Query().Get("error")
+			fmt.Fprintf(w, "<html><body><h2>Error: %s</h2><p>You can close this tab.</p></body></html>", errMsg)
+			errCh <- fmt.Errorf("auth error: %s", errMsg)
+			return
+		}
+		fmt.Fprint(w, "<html><body><h2>Authorised!</h2><p>You can close this tab and return to the terminal.</p></body></html>")
+		codeCh <- code
+	})
+
+	srv := &http.Server{Handler: mux}
+	go func() {
+		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
+			errCh <- fmt.Errorf("local server error: %w", err)
+		}
+	}()
+
+	// Block until the callback arrives or an error occurs.
+	var code string
+	select {
+	case code = <-codeCh:
+	case err := <-errCh:
+		log.Fatalf("Failed: %v", err)
 	}
+	srv.Close()
 
 	token, err := cfg.Exchange(context.Background(), code)
 	if err != nil {

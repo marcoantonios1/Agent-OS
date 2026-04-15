@@ -27,6 +27,8 @@ When multiple providers are configured, the runtime picks the first match:
 4. Choose **Desktop app** as the application type.
 5. Copy the **Client ID** and **Client secret**.
 
+> **Note:** Google's Desktop app type automatically allows `http://127.0.0.1` as a redirect URI, which is what the auth helper uses. No manual redirect URI configuration is needed.
+
 ### 2. Run the auth helper
 
 ```bash
