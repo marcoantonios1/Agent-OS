@@ -84,36 +84,24 @@ Configuration is loaded at startup from `.env` (if present) and then from actual
 |---|---|---|---|
 | `BUILDER_SANDBOX_DIR` | No | `workspace` | Root directory for all file/shell operations by the Builder Agent |
 
-### Gmail
+### Google (Gmail + Google Calendar)
+
+A single refresh token covers both Gmail and Google Calendar. Run `go run ./cmd/tool/googleauth/` once — see [docs/email-setup.md](docs/email-setup.md) and [docs/calendar-setup.md](docs/calendar-setup.md) for full instructions.
 
 | Variable | Required | Description |
 |---|---|---|
-| `GMAIL_CLIENT_ID` | For Gmail | OAuth2 client ID — see [docs/email-setup.md](docs/email-setup.md) |
-| `GMAIL_CLIENT_SECRET` | For Gmail | OAuth2 client secret |
-| `GMAIL_REFRESH_TOKEN` | For Gmail | Long-lived refresh token (obtained via `make gmailauth`) |
+| `GOOGLE_CLIENT_ID` | For Google | OAuth2 client ID |
+| `GOOGLE_CLIENT_SECRET` | For Google | OAuth2 client secret |
+| `GOOGLE_REFRESH_TOKEN` | For Google | Long-lived refresh token (covers Gmail + Calendar) |
 
-### Google Calendar
+### Microsoft (Outlook Mail + Outlook Calendar)
 
-| Variable | Required | Description |
-|---|---|---|
-| `GOOGLE_CAL_CLIENT_ID` | For Google Cal | OAuth2 client ID |
-| `GOOGLE_CAL_CLIENT_SECRET` | For Google Cal | OAuth2 client secret |
-| `GOOGLE_CAL_REFRESH_TOKEN` | For Google Cal | Long-lived refresh token (obtained via `make googlecalauth`) |
-
-### Outlook (email)
+A single refresh token covers both Outlook Mail and Outlook Calendar. Run `go run ./cmd/tool/microsoftauth/` once — see [docs/email-setup.md](docs/email-setup.md) and [docs/calendar-setup.md](docs/calendar-setup.md) for full instructions.
 
 | Variable | Required | Description |
 |---|---|---|
-| `OUTLOOK_CLIENT_ID` | For Outlook email | Azure app client ID — see [docs/email-setup.md](docs/email-setup.md) |
-| `OUTLOOK_CLIENT_SECRET` | No | Client secret (not required for device code flow apps) |
-| `OUTLOOK_REFRESH_TOKEN` | For Outlook email | Long-lived refresh token (obtained via `make outlookauth`) |
-
-### Outlook Calendar
-
-| Variable | Required | Description |
-|---|---|---|
-| `OUTLOOK_CAL_CLIENT_ID` | For Outlook Cal | Azure app client ID |
-| `OUTLOOK_CAL_REFRESH_TOKEN` | For Outlook Cal | Long-lived refresh token (obtained via `make outlookcalauth`) |
+| `MICROSOFT_CLIENT_ID` | For Microsoft | Azure app client ID |
+| `MICROSOFT_REFRESH_TOKEN` | For Microsoft | Long-lived refresh token (covers Outlook Mail + Calendar) |
 
 ## API
 
