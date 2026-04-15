@@ -20,7 +20,7 @@ Agent OS supports two email providers out of the box: **Gmail** and **Outlook** 
 ### 2. Get your refresh token
 
 ```bash
-GMAIL_CLIENT_ID=<id> GMAIL_CLIENT_SECRET=<secret> go run ./cmd/gmailauth/
+GMAIL_CLIENT_ID=<id> GMAIL_CLIENT_SECRET=<secret> go run ./cmd/tool/gmailauth/
 ```
 
 Open the printed URL, sign in, paste the authorisation code back — your `GMAIL_REFRESH_TOKEN` is printed.
@@ -59,7 +59,7 @@ Copy the **Application (client) ID** from the Overview page.
 ### 2. Get your refresh token
 
 ```bash
-OUTLOOK_CLIENT_ID=<your-app-id> go run ./cmd/outlookauth/
+OUTLOOK_CLIENT_ID=<your-app-id> go run ./cmd/tool/outlookauth/
 ```
 
 The tool prints a short code (e.g. `ABCD-1234`) and a URL. Open `https://microsoft.com/devicelogin`, enter the code, sign in with `marco_antonios1@outlook.com` — the terminal prints your `OUTLOOK_REFRESH_TOKEN` automatically.

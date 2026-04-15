@@ -30,7 +30,7 @@ When multiple providers are configured, the runtime picks the first match:
 ```bash
 GOOGLE_CAL_CLIENT_ID=<your-client-id> \
 GOOGLE_CAL_CLIENT_SECRET=<your-client-secret> \
-go run ./cmd/googlecalauth/
+go run ./cmd/tool/googlecalauth/
 ```
 
 Follow the on-screen instructions:
@@ -73,7 +73,7 @@ This works with personal Microsoft accounts (`@outlook.com`, `@hotmail.com`).
 ### 2. Run the auth helper
 
 ```bash
-OUTLOOK_CAL_CLIENT_ID=<your-client-id> go run ./cmd/outlookcalauth/
+OUTLOOK_CAL_CLIENT_ID=<your-client-id> go run ./cmd/tool/outlookcalauth/
 ```
 
 Follow the on-screen instructions:
