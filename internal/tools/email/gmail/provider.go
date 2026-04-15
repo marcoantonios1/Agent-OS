@@ -28,16 +28,16 @@ type Provider struct {
 
 // NewFromEnv creates a Provider reading credentials from environment variables:
 //
-//	GMAIL_CLIENT_ID      — OAuth2 client ID
-//	GMAIL_CLIENT_SECRET  — OAuth2 client secret
-//	GMAIL_REFRESH_TOKEN  — long-lived refresh token (obtained via gmailauth)
+//	GOOGLE_CLIENT_ID      — OAuth2 client ID
+//	GOOGLE_CLIENT_SECRET  — OAuth2 client secret
+//	GOOGLE_REFRESH_TOKEN  — long-lived refresh token (obtained via googleauth)
 func NewFromEnv(ctx context.Context) (*Provider, error) {
-	clientID := os.Getenv("GMAIL_CLIENT_ID")
-	clientSecret := os.Getenv("GMAIL_CLIENT_SECRET")
-	refreshToken := os.Getenv("GMAIL_REFRESH_TOKEN")
+	clientID := os.Getenv("GOOGLE_CLIENT_ID")
+	clientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
+	refreshToken := os.Getenv("GOOGLE_REFRESH_TOKEN")
 
 	if clientID == "" || clientSecret == "" || refreshToken == "" {
-		return nil, fmt.Errorf("gmail: GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, and GMAIL_REFRESH_TOKEN must all be set")
+		return nil, fmt.Errorf("gmail: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REFRESH_TOKEN must all be set")
 	}
 	return New(ctx, clientID, clientSecret, refreshToken)
 }

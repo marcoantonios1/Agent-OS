@@ -38,14 +38,14 @@ type Provider struct {
 
 // NewFromEnv creates a Provider from environment variables:
 //
-//	OUTLOOK_CAL_CLIENT_ID    — Azure app client ID
-//	OUTLOOK_CAL_REFRESH_TOKEN — long-lived refresh token (from outlookcalauth)
+//	MICROSOFT_CLIENT_ID     — Azure app client ID
+//	MICROSOFT_REFRESH_TOKEN — long-lived refresh token (from microsoftauth)
 func NewFromEnv(ctx context.Context) (*Provider, error) {
-	clientID := os.Getenv("OUTLOOK_CAL_CLIENT_ID")
-	refreshToken := os.Getenv("OUTLOOK_CAL_REFRESH_TOKEN")
+	clientID := os.Getenv("MICROSOFT_CLIENT_ID")
+	refreshToken := os.Getenv("MICROSOFT_REFRESH_TOKEN")
 
 	if clientID == "" || refreshToken == "" {
-		return nil, fmt.Errorf("outlook calendar: OUTLOOK_CAL_CLIENT_ID and OUTLOOK_CAL_REFRESH_TOKEN must be set")
+		return nil, fmt.Errorf("outlook calendar: MICROSOFT_CLIENT_ID and MICROSOFT_REFRESH_TOKEN must be set")
 	}
 	return New(ctx, clientID, refreshToken)
 }

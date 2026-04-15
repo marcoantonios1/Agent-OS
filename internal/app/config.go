@@ -47,32 +47,22 @@ type Config struct {
 	// Env: COSTGUARD_API_KEY
 	CostguardAPIKey string
 
-	// ── Gmail ─────────────────────────────────────────────────────────────────
+	// ── Google (Gmail + Calendar) ─────────────────────────────────────────────
 
-	// Env: GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN
-	GmailClientID     string
-	GmailClientSecret string
-	GmailRefreshToken string
+	// A single OAuth2 client and refresh token covers both Gmail and Google
+	// Calendar — obtained via: go run ./cmd/tool/googleauth/
+	// Env: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN
+	GoogleClientID     string
+	GoogleClientSecret string
+	GoogleRefreshToken string
 
-	// ── Google Calendar ───────────────────────────────────────────────────────
+	// ── Microsoft (Outlook Mail + Calendar) ───────────────────────────────────
 
-	// Env: GOOGLE_CAL_CLIENT_ID, GOOGLE_CAL_CLIENT_SECRET, GOOGLE_CAL_REFRESH_TOKEN
-	GoogleCalClientID     string
-	GoogleCalClientSecret string
-	GoogleCalRefreshToken string
-
-	// ── Outlook email ─────────────────────────────────────────────────────────
-
-	// Env: OUTLOOK_CLIENT_ID, OUTLOOK_CLIENT_SECRET (optional), OUTLOOK_REFRESH_TOKEN
-	OutlookClientID     string
-	OutlookClientSecret string
-	OutlookRefreshToken string
-
-	// ── Outlook Calendar ──────────────────────────────────────────────────────
-
-	// Env: OUTLOOK_CAL_CLIENT_ID, OUTLOOK_CAL_REFRESH_TOKEN
-	OutlookCalClientID     string
-	OutlookCalRefreshToken string
+	// A single OAuth2 client and refresh token covers both Outlook Mail and
+	// Outlook Calendar — obtained via: go run ./cmd/tool/microsoftauth/
+	// Env: MICROSOFT_CLIENT_ID, MICROSOFT_REFRESH_TOKEN
+	MicrosoftClientID     string
+	MicrosoftRefreshToken string
 
 	// ── Builder Agent ─────────────────────────────────────────────────────────
 
@@ -103,20 +93,12 @@ func Load(envFile string) (*Config, error) {
 		CostguardURL:    os.Getenv("COSTGUARD_URL"),
 		CostguardAPIKey: os.Getenv("COSTGUARD_API_KEY"),
 
-		GmailClientID:     os.Getenv("GMAIL_CLIENT_ID"),
-		GmailClientSecret: os.Getenv("GMAIL_CLIENT_SECRET"),
-		GmailRefreshToken: os.Getenv("GMAIL_REFRESH_TOKEN"),
+		GoogleClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
+		GoogleClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
+		GoogleRefreshToken: os.Getenv("GOOGLE_REFRESH_TOKEN"),
 
-		GoogleCalClientID:     os.Getenv("GOOGLE_CAL_CLIENT_ID"),
-		GoogleCalClientSecret: os.Getenv("GOOGLE_CAL_CLIENT_SECRET"),
-		GoogleCalRefreshToken: os.Getenv("GOOGLE_CAL_REFRESH_TOKEN"),
-
-		OutlookClientID:     os.Getenv("OUTLOOK_CLIENT_ID"),
-		OutlookClientSecret: os.Getenv("OUTLOOK_CLIENT_SECRET"),
-		OutlookRefreshToken: os.Getenv("OUTLOOK_REFRESH_TOKEN"),
-
-		OutlookCalClientID:     os.Getenv("OUTLOOK_CAL_CLIENT_ID"),
-		OutlookCalRefreshToken: os.Getenv("OUTLOOK_CAL_REFRESH_TOKEN"),
+		MicrosoftClientID:     os.Getenv("MICROSOFT_CLIENT_ID"),
+		MicrosoftRefreshToken: os.Getenv("MICROSOFT_REFRESH_TOKEN"),
 
 		BuilderSandboxDir: envOr("BUILDER_SANDBOX_DIR", "workspace"),
 		SessionTTL:        envDuration("SESSION_TTL", 24*time.Hour),
@@ -140,24 +122,16 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// GmailConfigured reports whether all three Gmail OAuth2 credentials are present.
-func (c *Config) GmailConfigured() bool {
-	return c.GmailClientID != "" && c.GmailClientSecret != "" && c.GmailRefreshToken != ""
+// GoogleConfigured reports whether all Google OAuth2 credentials are present.
+// A single token covers both Gmail and Google Calendar.
+func (c *Config) GoogleConfigured() bool {
+	return c.GoogleClientID != "" && c.GoogleClientSecret != "" && c.GoogleRefreshToken != ""
 }
 
-// GoogleCalConfigured reports whether all Google Calendar credentials are present.
-func (c *Config) GoogleCalConfigured() bool {
-	return c.GoogleCalClientID != "" && c.GoogleCalClientSecret != "" && c.GoogleCalRefreshToken != ""
-}
-
-// OutlookEmailConfigured reports whether the minimum Outlook email credentials are present.
-func (c *Config) OutlookEmailConfigured() bool {
-	return c.OutlookClientID != "" && c.OutlookRefreshToken != ""
-}
-
-// OutlookCalConfigured reports whether Outlook Calendar credentials are present.
-func (c *Config) OutlookCalConfigured() bool {
-	return c.OutlookCalClientID != "" && c.OutlookCalRefreshToken != ""
+// MicrosoftConfigured reports whether the Microsoft OAuth2 credentials are present.
+// A single token covers both Outlook Mail and Outlook Calendar.
+func (c *Config) MicrosoftConfigured() bool {
+	return c.MicrosoftClientID != "" && c.MicrosoftRefreshToken != ""
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

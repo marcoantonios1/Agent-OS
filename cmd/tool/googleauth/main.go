@@ -1,10 +1,9 @@
-// googlecalauth is a one-time helper that walks you through the Google Calendar
-// OAuth2 flow and prints the refresh token you need to set as
-// GOOGLE_CAL_REFRESH_TOKEN.
+// googleauth is a one-time helper that walks you through the Google OAuth2 flow
+// and prints the single refresh token that covers both Gmail and Google Calendar.
 //
 // Usage:
 //
-//	GOOGLE_CAL_CLIENT_ID=<id> GOOGLE_CAL_CLIENT_SECRET=<secret> go run ./cmd/googlecalauth/
+//	GOOGLE_CLIENT_ID=<id> GOOGLE_CLIENT_SECRET=<secret> go run ./cmd/tool/googleauth/
 package main
 
 import (
@@ -18,19 +17,22 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	googlecal "google.golang.org/api/calendar/v3"
+	googlemail "google.golang.org/api/gmail/v1"
 )
 
 func main() {
-	clientID := os.Getenv("GOOGLE_CAL_CLIENT_ID")
-	clientSecret := os.Getenv("GOOGLE_CAL_CLIENT_SECRET")
+	clientID := os.Getenv("GOOGLE_CLIENT_ID")
+	clientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
 	if clientID == "" || clientSecret == "" {
-		log.Fatal("Set GOOGLE_CAL_CLIENT_ID and GOOGLE_CAL_CLIENT_SECRET before running this tool.")
+		log.Fatal("Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET before running this tool.")
 	}
 
 	cfg := &oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		Scopes: []string{
+			googlemail.GmailReadonlyScope,
+			googlemail.GmailComposeScope,
 			googlecal.CalendarReadonlyScope,
 			googlecal.CalendarEventsScope,
 		},
@@ -41,7 +43,7 @@ func main() {
 	url := cfg.AuthCodeURL("state", oauth2.AccessTypeOffline, oauth2.ApprovalForce)
 
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	fmt.Println("  Google Calendar OAuth2 Setup")
+	fmt.Println("  Google OAuth2 Setup (Gmail + Calendar)")
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Println()
 	fmt.Println("1. Open this URL in your browser:")
@@ -70,9 +72,10 @@ func main() {
 	fmt.Println("  Success! Add these to your .env file:")
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Println()
-	fmt.Printf("GOOGLE_CAL_CLIENT_ID=%s\n", clientID)
-	fmt.Printf("GOOGLE_CAL_CLIENT_SECRET=%s\n", clientSecret)
-	fmt.Printf("GOOGLE_CAL_REFRESH_TOKEN=%s\n", token.RefreshToken)
+	fmt.Printf("GOOGLE_CLIENT_ID=%s\n", clientID)
+	fmt.Printf("GOOGLE_CLIENT_SECRET=%s\n", clientSecret)
+	fmt.Printf("GOOGLE_REFRESH_TOKEN=%s\n", token.RefreshToken)
 	fmt.Println()
-	fmt.Println("Keep the refresh token secret — it grants read/write access to your Google Calendar.")
+	fmt.Println("This single token grants access to both Gmail and Google Calendar.")
+	fmt.Println("Keep the refresh token secret.")
 }
