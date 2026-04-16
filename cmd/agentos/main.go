@@ -79,7 +79,7 @@ func main() {
 	// Start Discord channel if configured.
 	var discordHandler *discord.Handler
 	if cfg.DiscordConfigured() {
-		discordHandler = discord.New(r, cfg.DiscordBotToken, cfg.DiscordGuildID)
+		discordHandler = discord.New(r, cfg.DiscordBotToken, cfg.DiscordGuildID, cfg.DiscordPrefix)
 		go func() {
 			if err := discordHandler.Start(ctx); err != nil {
 				slog.Error("discord channel error", "error", err)
