@@ -84,6 +84,15 @@ Configuration is loaded at startup from `.env` (if present) and then from actual
 |---|---|---|---|
 | `BUILDER_SANDBOX_DIR` | No | `workspace` | Root directory for all file/shell operations by the Builder Agent |
 
+### Discord channel
+
+| Variable | Required | Description |
+|---|---|---|
+| `DISCORD_BOT_TOKEN` | For Discord | Bot token — create one at [discord.com/developers](https://discord.com/developers/applications) |
+| `DISCORD_GUILD_ID` | No | Restricts the bot to one server (recommended for personal use) |
+
+If `DISCORD_BOT_TOKEN` is absent the server starts normally and only the web channel is active.
+
 ### Research Agent (web search)
 
 | Variable | Required | Default | Description |
@@ -152,6 +161,7 @@ internal/
   tools/calendar/       — calendar tools + CalendarProvider interface
   tools/calendar/google/  — Google Calendar provider
   tools/calendar/outlook/ — Outlook Calendar provider
+  channels/discord/       — Discord gateway handler
   tools/websearch/        — web_search + web_fetch tools + SearchProvider interface
   tools/websearch/brave/  — Brave Search API implementation
   agents/research/        — Research Agent (web search + synthesis)

@@ -15,6 +15,7 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/agents/comms"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/research"
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
+	"github.com/marcoantonios1/Agent-OS/internal/channels/discord"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/memory"
@@ -75,9 +76,26 @@ func main() {
 		}
 	}()
 
+	// Start Discord channel if configured.
+	var discordHandler *discord.Handler
+	if cfg.DiscordConfigured() {
+		discordHandler = discord.New(r, cfg.DiscordBotToken, cfg.DiscordGuildID)
+		go func() {
+			if err := discordHandler.Start(ctx); err != nil {
+				slog.Error("discord channel error", "error", err)
+			}
+		}()
+	} else {
+		slog.Warn("DISCORD_BOT_TOKEN not set — Discord channel disabled")
+	}
+
 	// Block until SIGINT or SIGTERM.
 	<-ctx.Done()
 	stop()
+
+	if discordHandler != nil {
+		discordHandler.Stop()
+	}
 
 	slog.Info("shutting down — draining in-flight requests")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
