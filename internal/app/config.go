@@ -64,6 +64,16 @@ type Config struct {
 	MicrosoftClientID     string
 	MicrosoftRefreshToken string
 
+	// ── Discord channel ───────────────────────────────────────────────────────
+
+	// DiscordBotToken is the bot token for the Discord gateway.
+	// Env: DISCORD_BOT_TOKEN (required to enable Discord)
+	DiscordBotToken string
+
+	// DiscordGuildID restricts the bot to a single guild (server).
+	// Env: DISCORD_GUILD_ID (optional — empty means all guilds)
+	DiscordGuildID string
+
 	// ── Research Agent ────────────────────────────────────────────────────────
 
 	// SearchAPIKey is the API key for the web search provider.
