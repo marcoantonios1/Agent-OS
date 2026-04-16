@@ -1,6 +1,7 @@
 package discord
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -194,10 +195,11 @@ func TestSplitMessage_ExactLimit(t *testing.T) {
 }
 
 func TestSplitMessage_PreservesNewlines(t *testing.T) {
-	// Build a string where a good split point exists near the 3/4 mark.
-	part1 := string(make([]byte, 1600)) // 1600 bytes
-	part2 := "second part"
-	text := part1 + "\n" + part2
+	// Build a 2001-char string with a newline at position 1600 (past the 3/4 mark
+	// of 2000 = 1500), so splitMessage prefers to break there.
+	part1 := strings.Repeat("a", 1600)
+	part2 := strings.Repeat("b", 400)
+	text := part1 + "\n" + part2 // 2001 chars total — forces a split
 	chunks := splitMessage(text, 2000)
 	if len(chunks) < 2 {
 		t.Errorf("expected 2+ chunks, got %d", len(chunks))
