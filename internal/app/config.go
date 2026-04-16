@@ -74,6 +74,12 @@ type Config struct {
 	// Env: DISCORD_GUILD_ID (optional — empty means all guilds)
 	DiscordGuildID string
 
+	// DiscordPrefix is an optional command prefix for guild channels (e.g. "!ai").
+	// When set, only messages starting with this prefix (or a bot @mention) are
+	// routed in server channels. DMs are always routed. Default: "" (no filter).
+	// Env: DISCORD_PREFIX
+	DiscordPrefix string
+
 	// ── Research Agent ────────────────────────────────────────────────────────
 
 	// SearchAPIKey is the API key for the web search provider.
@@ -122,6 +128,7 @@ func Load(envFile string) (*Config, error) {
 
 		DiscordBotToken: os.Getenv("DISCORD_BOT_TOKEN"),
 		DiscordGuildID:  os.Getenv("DISCORD_GUILD_ID"),
+		DiscordPrefix:   os.Getenv("DISCORD_PREFIX"),
 
 		SearchAPIKey:   os.Getenv("SEARCH_API_KEY"),
 		SearchProvider: envOr("SEARCH_PROVIDER", "brave"),
