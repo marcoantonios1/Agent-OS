@@ -120,6 +120,9 @@ func Load(envFile string) (*Config, error) {
 		MicrosoftClientID:     os.Getenv("MICROSOFT_CLIENT_ID"),
 		MicrosoftRefreshToken: os.Getenv("MICROSOFT_REFRESH_TOKEN"),
 
+		DiscordBotToken: os.Getenv("DISCORD_BOT_TOKEN"),
+		DiscordGuildID:  os.Getenv("DISCORD_GUILD_ID"),
+
 		SearchAPIKey:   os.Getenv("SEARCH_API_KEY"),
 		SearchProvider: envOr("SEARCH_PROVIDER", "brave"),
 
@@ -143,6 +146,11 @@ func (c *Config) validate() error {
 		return errors.New("config: " + strings.Join(missing, "; "))
 	}
 	return nil
+}
+
+// DiscordConfigured reports whether a Discord bot token is present.
+func (c *Config) DiscordConfigured() bool {
+	return c.DiscordBotToken != ""
 }
 
 // SearchConfigured reports whether a search API key is present.
