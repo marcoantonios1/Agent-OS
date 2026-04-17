@@ -198,9 +198,11 @@ type testStack struct {
 // stackConfig configures what providers the stack includes.
 type stackConfig struct {
 	llmResponses []costguard.CompletionResponse
+	customLLM    costguard.LLMClient      // if set, used instead of scripted responses
 	emailProv    *mockEmailProvider
 	calProv      calendar.CalendarProvider
 	searchProv   websearch.SearchProvider // nil → stub (empty results)
+	userStore    *memory.UserStore        // nil → empty in-memory store
 	sandboxDir   string
 }
 
@@ -208,9 +210,13 @@ type stackConfig struct {
 // call stack.Close() when the test completes.
 func newStack(cfg stackConfig) *testStack {
 	llm := newScriptedLLM(cfg.llmResponses...)
+	var agentLLM costguard.LLMClient = llm
+	if cfg.customLLM != nil {
+		agentLLM = cfg.customLLM
+	}
 	store := memory.NewStore()
 	approvals := approval.NewMemoryStore()
-	classifier := router.NewLLMClassifier(llm)
+	classifier := router.NewLLMClassifier(agentLLM)
 
 	sandboxDir := cfg.sandboxDir
 	if sandboxDir == "" {
@@ -222,13 +228,19 @@ func newStack(cfg stackConfig) *testStack {
 		searchProv = &mockSearchProvider{} // empty results stub
 	}
 
+	userStore := cfg.userStore
+	if userStore == nil {
+		userStore = memory.NewUserStore()
+	}
+
 	agents := map[router.Intent]router.Agent{
-		router.IntentComms:    comms.New(llm, cfg.emailProv, cfg.calProv, approvals, memory.NewUserStore()),
-		router.IntentBuilder:  builder.New(llm, store, code.Config{SandboxDir: sandboxDir}, memory.NewProjectStore()),
-		router.IntentResearch: research.New(llm, newWebSearchRegistry(searchProv)),
+		router.IntentComms:    comms.New(agentLLM, cfg.emailProv, cfg.calProv, approvals, userStore),
+		router.IntentBuilder:  builder.New(agentLLM, store, code.Config{SandboxDir: sandboxDir}, memory.NewProjectStore()),
+		router.IntentResearch: research.New(agentLLM, newWebSearchRegistry(searchProv)),
 	}
 
 	r := router.New(classifier, agents, store, approvals)
+	r.Users = userStore
 	h := web.NewHandler(r, nil)
 	srv := httptest.NewServer(h)
 

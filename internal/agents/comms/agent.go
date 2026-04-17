@@ -8,8 +8,11 @@ package comms
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
@@ -76,15 +79,58 @@ const systemPromptBase = `You are the Comms Agent for Agent OS — a personal AI
 - "Schedule a meeting"        → calendar_create → show pending_approval → ask user to confirm
 - "Always sign off as Marco"  → user_profile_update with preferences: {"sign_off": "Marco"}`
 
-// buildSystemPrompt returns the system prompt with the current local date/time
-// and UTC offset injected. This ensures the LLM uses the correct timezone when
-// constructing RFC3339 timestamps for calendar_create and calendar_update calls.
-func buildSystemPrompt() string {
+// buildSystemPrompt returns the system prompt with optional user context and
+// the current local date/time injected.
+func buildSystemPrompt(profile *sessions.UserProfile) string {
+	var sb strings.Builder
+	sb.WriteString(systemPromptBase)
+
+	if profile != nil {
+		sb.WriteString("\n\n## User context")
+		if profile.Name != "" {
+			sb.WriteString("\nName: ")
+			sb.WriteString(profile.Name)
+		}
+		if profile.CommunicationStyle != "" {
+			sb.WriteString("\nCommunication style: ")
+			sb.WriteString(profile.CommunicationStyle)
+		}
+		if len(profile.Preferences) > 0 {
+			sb.WriteString("\nPreferences:")
+			keys := make([]string, 0, len(profile.Preferences))
+			for k := range profile.Preferences {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				sb.WriteString("\n  - ")
+				sb.WriteString(k)
+				sb.WriteString(": ")
+				sb.WriteString(profile.Preferences[k])
+			}
+		}
+		if len(profile.RecurringContacts) > 0 {
+			sb.WriteString("\nRecurring contacts:")
+			for _, c := range profile.RecurringContacts {
+				sb.WriteString("\n  - ")
+				sb.WriteString(c.Name)
+				sb.WriteString(" (")
+				sb.WriteString(c.Email)
+				sb.WriteString(")")
+				if c.Notes != "" {
+					sb.WriteString(" — ")
+					sb.WriteString(c.Notes)
+				}
+			}
+		}
+	}
+
 	now := time.Now()
-	return systemPromptBase + "\n\n## Current time\n" +
-		"Local date/time (use this UTC offset for ALL calendar timestamps): " +
-		now.Format(time.RFC3339) + "\n" +
-		"Day of week: " + now.Weekday().String()
+	sb.WriteString("\n\n## Current time\nLocal date/time (use this UTC offset for ALL calendar timestamps): ")
+	sb.WriteString(now.Format(time.RFC3339))
+	sb.WriteString("\nDay of week: ")
+	sb.WriteString(now.Weekday().String())
+	return sb.String()
 }
 
 // Agent implements the Comms Agent. It wires email and calendar tools into an
@@ -145,12 +191,21 @@ func (a *Agent) Handle(ctx context.Context, req types.AgentRequest) (types.Agent
 	)
 	start := time.Now()
 
+	// Parse user profile injected by the router (may be absent).
+	var profile *sessions.UserProfile
+	if raw := req.Metadata["user.profile"]; raw != "" {
+		var p sessions.UserProfile
+		if err := json.Unmarshal([]byte(raw), &p); err == nil {
+			profile = &p
+		}
+	}
+
 	// Build the message list: system prompt followed by the full conversation
 	// history (which already includes the current user message, added by the router).
 	msgs := make([]types.ConversationTurn, 0, len(req.History)+1)
 	msgs = append(msgs, types.ConversationTurn{
 		Role:    "system",
-		Content: buildSystemPrompt(),
+		Content: buildSystemPrompt(profile),
 	})
 	msgs = append(msgs, req.History...)
 
