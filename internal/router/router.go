@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -37,7 +38,11 @@ type Router struct {
 	Agents     map[Intent]Agent
 	Sessions   sessions.SessionStore
 	Approvals  approval.Store
-	log        *slog.Logger
+	// Users is optional. When set, the user's profile is loaded on every
+	// dispatch and injected into AgentRequest.Metadata under "user.profile"
+	// so agents can personalise their system prompts.
+	Users sessions.UserStore
+	log   *slog.Logger
 }
 
 // New returns a Router with the given classifier, agents, session store, and
@@ -241,6 +246,21 @@ func (r *Router) dispatch(
 		"session_id", msg.SessionID,
 		"agent_id", string(intent),
 	)
+
+	// Build per-dispatch metadata: session metadata + freshly loaded user
+	// profile. We copy to avoid mutating the session's metadata map.
+	agentMeta := make(map[string]string, len(sessionMeta)+1)
+	for k, v := range sessionMeta {
+		agentMeta[k] = v
+	}
+	if r.Users != nil {
+		if profile, err := r.Users.GetUser(msg.UserID); err == nil {
+			if b, err := json.Marshal(profile); err == nil {
+				agentMeta["user.profile"] = string(b)
+			}
+		}
+	}
+
 	start := time.Now()
 	resp, err := agent.Handle(ctx, types.AgentRequest{
 		SessionID: msg.SessionID,
@@ -248,7 +268,7 @@ func (r *Router) dispatch(
 		Intent:    string(intent),
 		History:   history,
 		Input:     msg.Text,
-		Metadata:  sessionMeta,
+		Metadata:  agentMeta,
 	})
 	latency := time.Since(start).Milliseconds()
 	if err != nil {

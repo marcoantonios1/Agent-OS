@@ -63,6 +63,7 @@ func main() {
 	}
 
 	r := router.New(classifier, agents, store, approvals)
+	r.Users = userStore
 	h := web.NewHandler(r, llm)
 
 	srv := &http.Server{
