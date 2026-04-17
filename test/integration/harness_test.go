@@ -201,6 +201,7 @@ type stackConfig struct {
 	emailProv    *mockEmailProvider
 	calProv      calendar.CalendarProvider
 	searchProv   websearch.SearchProvider // nil → stub (empty results)
+	userStore    *memory.UserStore        // nil → empty in-memory store
 	sandboxDir   string
 }
 
