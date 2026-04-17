@@ -224,7 +224,7 @@ func newStack(cfg stackConfig) *testStack {
 
 	agents := map[router.Intent]router.Agent{
 		router.IntentComms:    comms.New(llm, cfg.emailProv, cfg.calProv, approvals),
-		router.IntentBuilder:  builder.New(llm, store, code.Config{SandboxDir: sandboxDir}),
+		router.IntentBuilder:  builder.New(llm, store, code.Config{SandboxDir: sandboxDir}, memory.NewProjectStore()),
 		router.IntentResearch: research.New(llm, newWebSearchRegistry(searchProv)),
 	}
 
