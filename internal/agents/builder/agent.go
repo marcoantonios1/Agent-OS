@@ -268,7 +268,16 @@ func (a *Agent) Handle(ctx context.Context, req types.AgentRequest) (types.Agent
 		projectName = project.Name
 	}
 
-	prompt := buildSystemPrompt(phase, spec, tasks, activeTask, projectName, projectID)
+	// Parse user profile injected by the router (may be absent).
+	var profile *sessions.UserProfile
+	if raw := req.Metadata["user.profile"]; raw != "" {
+		var p sessions.UserProfile
+		if err := json.Unmarshal([]byte(raw), &p); err == nil {
+			profile = &p
+		}
+	}
+
+	prompt := buildSystemPrompt(phase, spec, tasks, activeTask, projectName, projectID, profile)
 
 	msgs := make([]types.ConversationTurn, 0, len(req.History)+1)
 	msgs = append(msgs, types.ConversationTurn{Role: "system", Content: prompt})
@@ -335,9 +344,14 @@ func (a *Agent) Handle(ctx context.Context, req types.AgentRequest) (types.Agent
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-func buildSystemPrompt(phase, spec, tasks, activeTask, projectName, projectID string) string {
+func buildSystemPrompt(phase, spec, tasks, activeTask, projectName, projectID string, profile *sessions.UserProfile) string {
 	var sb strings.Builder
 	sb.WriteString(basePrompt)
+
+	if profile != nil && profile.Name != "" {
+		sb.WriteString("\n\n## User context\nName: ")
+		sb.WriteString(profile.Name)
+	}
 
 	if projectName != "" || projectID != "" {
 		sb.WriteString("\n\n## Current project\n")
