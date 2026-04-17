@@ -45,7 +45,7 @@ func textReply(text string) costguard.CompletionResponse {
 
 func newAgent(t *testing.T, llm costguard.LLMClient, store *memory.Store) *builder.Agent {
 	t.Helper()
-	return builder.New(llm, store, code.Config{SandboxDir: t.TempDir()})
+	return builder.New(llm, store, code.Config{SandboxDir: t.TempDir()}, memory.NewProjectStore())
 }
 
 func newStore(t *testing.T) *memory.Store {
@@ -220,7 +220,7 @@ func TestCodegenPhase_WritesFileAndValidates(t *testing.T) {
 	}))
 
 	cfg := code.Config{SandboxDir: dir}
-	a := builder.New(llm, store, cfg)
+	a := builder.New(llm, store, cfg, memory.NewProjectStore())
 
 	resp, err := a.Handle(context.Background(), types.AgentRequest{
 		SessionID: "s1",

@@ -48,6 +48,7 @@ func main() {
 
 	store := memory.NewStore()
 	defer store.Close()
+	projectStore := memory.NewProjectStore()
 	userStore := memory.NewUserStore()
 
 	approvals := approval.NewMemoryStore()
@@ -56,6 +57,8 @@ func main() {
 	classifier := router.NewLLMClassifier(llm)
 
 	agents := map[router.Intent]router.Agent{
+		router.IntentComms:    comms.New(llm, newEmailProvider(ctx, cfg), newCalendarProvider(ctx, cfg), approvals),
+		router.IntentBuilder:  builder.New(llm, store, newBuilderConfig(cfg), projectStore),
 		router.IntentComms:    comms.New(llm, newEmailProvider(ctx, cfg), newCalendarProvider(ctx, cfg), approvals, userStore),
 		router.IntentBuilder:  builder.New(llm, store, newBuilderConfig(cfg)),
 		router.IntentResearch: research.New(llm, newWebSearchRegistry(cfg)),
