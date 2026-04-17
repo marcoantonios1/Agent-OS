@@ -98,8 +98,9 @@ func (r *Router) Route(ctx context.Context, msg types.InboundMessage) (types.Out
 		"intents", intents,
 	)
 
-	// 5. Dispatch — inject session ID into ctx so tools can read it.
+	// 5. Dispatch — inject session and user IDs into ctx so tools can read them.
 	ctx = approval.WithSessionID(ctx, msg.SessionID)
+	ctx = sessions.WithUserID(ctx, msg.UserID)
 	agentResp, dispatchErr := r.dispatchAll(ctx, msg, intents, history, sess.Metadata)
 
 	// Save any metadata the agent(s) produced back into the session.
