@@ -238,15 +238,17 @@ func (h *Handler) editOrLog(s *discordgo.Session, ctx context.Context, channelID
 
 // truncateForEdit truncates text to fit within Discord's 2 000-char limit,
 // appending "…" and breaking at a word boundary when possible.
+// "…" is 3 bytes in UTF-8, so we reserve 3 bytes before the cut point.
 func truncateForEdit(text string) string {
+	const ellipsis = "…" // U+2026 — 3 bytes in UTF-8
 	if len(text) <= maxMessageLen {
 		return text
 	}
-	cut := maxMessageLen - 1 // leave one byte for the ellipsis rune
+	cut := maxMessageLen - len(ellipsis)
 	if idx := strings.LastIndexByte(text[:cut], ' '); idx > cut*3/4 {
 		cut = idx
 	}
-	return text[:cut] + "…"
+	return text[:cut] + ellipsis
 }
 
 // sessionKey returns a stable, unique session key for a user × channel × guild
