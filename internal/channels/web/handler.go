@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -22,6 +23,20 @@ const reqIDKey contextKey = "request_id"
 // *router.Router satisfies this interface.
 type Dispatcher interface {
 	Route(ctx context.Context, msg types.InboundMessage) (types.OutboundMessage, error)
+}
+
+// StreamDispatcher is the optional streaming extension of Dispatcher.
+// When the dispatcher also implements this interface, POST /v1/chat/stream
+// is enabled and returns a Server-Sent Events stream of tokens.
+type StreamDispatcher interface {
+	RouteStream(ctx context.Context, msg types.InboundMessage) (<-chan string, error)
+}
+
+// sseFrame is the JSON payload for each SSE data line.
+type sseFrame struct {
+	Delta     string `json:"delta"`
+	Done      bool   `json:"done,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
 }
 
 // ReadinessChecker reports whether all external dependencies are reachable.
@@ -68,6 +83,7 @@ func NewHandler(d Dispatcher, checker ReadinessChecker) *Handler {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat", h.chat)
+	mux.HandleFunc("POST /v1/chat/stream", h.chatStream)
 	mux.HandleFunc("GET /healthz", h.healthz)
 	mux.HandleFunc("GET /readyz", h.readyz)
 
@@ -130,6 +146,73 @@ func (h *Handler) chat(w http.ResponseWriter, r *http.Request) {
 		SessionID: out.SessionID,
 		Text:      out.Text,
 	})
+}
+
+func (h *Handler) chatStream(w http.ResponseWriter, r *http.Request) {
+	var req chatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.SessionID == "" || req.UserID == "" || req.Text == "" {
+		writeError(w, http.StatusBadRequest, "session_id, user_id, and text are required")
+		return
+	}
+
+	sd, ok := h.dispatcher.(StreamDispatcher)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "streaming not supported")
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming not supported by server")
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	start := time.Now()
+	msg := types.InboundMessage{
+		ID:        reqIDFromCtx(r.Context()),
+		ChannelID: types.ChannelID("web"),
+		UserID:    req.UserID,
+		SessionID: req.SessionID,
+		Text:      req.Text,
+		Timestamp: start,
+	}
+
+	h.log.InfoContext(r.Context(), "channel_received",
+		"session_id", req.SessionID, "user_id", req.UserID,
+		"text_length", len(req.Text), "channel", "web-stream")
+
+	chunks, err := sd.RouteStream(r.Context(), msg)
+	if err != nil {
+		h.log.ErrorContext(r.Context(), "router stream error",
+			"session_id", req.SessionID, "error", err)
+		writeSSEFrame(w, flusher, sseFrame{Delta: "internal error", Done: true, SessionID: req.SessionID})
+		return
+	}
+
+	for chunk := range chunks {
+		writeSSEFrame(w, flusher, sseFrame{Delta: chunk})
+	}
+	writeSSEFrame(w, flusher, sseFrame{Done: true, SessionID: req.SessionID})
+
+	h.log.InfoContext(r.Context(), "channel_response",
+		"session_id", req.SessionID,
+		"latency_ms", time.Since(start).Milliseconds(),
+		"channel", "web-stream")
+}
+
+func writeSSEFrame(w http.ResponseWriter, f http.Flusher, v sseFrame) {
+	b, _ := json.Marshal(v)
+	fmt.Fprintf(w, "data: %s\n\n", b) //nolint:errcheck
+	f.Flush()
 }
 
 func (h *Handler) healthz(w http.ResponseWriter, _ *http.Request) {
