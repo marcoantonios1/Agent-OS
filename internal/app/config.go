@@ -102,6 +102,14 @@ type Config struct {
 	// SessionTTL is how long idle sessions are kept in memory before expiry.
 	// Env: SESSION_TTL (default: 24h). Accepts any value parseable by time.ParseDuration.
 	SessionTTL time.Duration
+
+	// ── Persistence ───────────────────────────────────────────────────────────
+
+	// SQLitePath is the file path for the SQLite database used to persist user
+	// profiles and project state. When empty, in-memory stores are used and data
+	// is lost on restart (acceptable for local development without any config).
+	// Env: SQLITE_PATH (default: "" — in-memory)
+	SQLitePath string
 }
 
 // Load reads configuration from the given .env file (if it exists) and then
