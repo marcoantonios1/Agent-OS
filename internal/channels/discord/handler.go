@@ -19,6 +19,10 @@ import (
 // maxMessageLen is Discord's per-message character limit.
 const maxMessageLen = 2000
 
+// editInterval is how often the in-progress message is edited while streaming.
+// 500 ms gives ~2 edits/sec — well within Discord's ~5 edits/sec rate limit.
+const editInterval = 500 * time.Millisecond
+
 // Handler listens for Discord messages and routes them through the shared
 // Dispatcher (router.Router). One Handler per bot token.
 type Handler struct {
@@ -128,27 +132,123 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		Timestamp: start,
 	}
 
+	h.routeAndRespond(s, ctx, m.ChannelID, inbound, sid, start)
+}
+
+// routeAndRespond dispatches inbound via streaming when the dispatcher supports
+// it, falling back to blocking Route() on error or when streaming is unavailable.
+func (h *Handler) routeAndRespond(
+	s *discordgo.Session,
+	ctx context.Context,
+	channelID string,
+	inbound types.InboundMessage,
+	sid string,
+	start time.Time,
+) {
+	if sd, ok := h.dispatcher.(web.StreamDispatcher); ok {
+		chunks, err := sd.RouteStream(ctx, inbound)
+		if err == nil {
+			h.respondStreaming(s, ctx, channelID, sid, start, chunks)
+			return
+		}
+		h.log.WarnContext(ctx, "discord: stream route failed, falling back to blocking",
+			"session_id", sid, "error", err)
+	}
+
+	// Blocking fallback.
 	out, err := h.dispatcher.Route(ctx, inbound)
 	if err != nil {
-		h.log.ErrorContext(ctx, "discord route error",
-			"session_id", sid, "error", err)
-		s.ChannelMessageSend(m.ChannelID, "Sorry, something went wrong. Please try again.") //nolint:errcheck
+		h.log.ErrorContext(ctx, "discord route error", "session_id", sid, "error", err)
+		s.ChannelMessageSend(channelID, "Sorry, something went wrong. Please try again.") //nolint:errcheck
 		return
+	}
+	h.log.InfoContext(ctx, "channel_response",
+		"session_id", sid, "latency_ms", time.Since(start).Milliseconds(), "channel", "discord")
+	for _, part := range splitMessage(out.Text, maxMessageLen) {
+		if _, err := s.ChannelMessageSend(channelID, part); err != nil {
+			h.log.WarnContext(ctx, "discord send error", "session_id", sid, "error", err)
+		}
+	}
+}
+
+// respondStreaming posts an initial "…" placeholder then edits it as tokens
+// arrive, throttled to editInterval. A final edit delivers the complete text;
+// overflow beyond 2 000 characters is sent as additional messages.
+func (h *Handler) respondStreaming(
+	s *discordgo.Session,
+	ctx context.Context,
+	channelID, sid string,
+	start time.Time,
+	chunks <-chan string,
+) {
+	placeholder, err := s.ChannelMessageSend(channelID, "…")
+	if err != nil {
+		h.log.WarnContext(ctx, "discord: failed to post placeholder",
+			"session_id", sid, "error", err)
+		for range chunks {} //nolint:revive — drain so router goroutine can exit
+		return
+	}
+	msgID := placeholder.ID
+
+	var sb strings.Builder
+	ticker := time.NewTicker(editInterval)
+	defer ticker.Stop()
+
+outerLoop:
+	for {
+		select {
+		case chunk, ok := <-chunks:
+			if !ok {
+				break outerLoop
+			}
+			sb.WriteString(chunk)
+		case <-ticker.C:
+			if sb.Len() > 0 {
+				h.editOrLog(s, ctx, channelID, msgID, sid, truncateForEdit(sb.String()))
+			}
+		case <-ctx.Done():
+			for range chunks {} //nolint:revive
+			return
+		}
+	}
+
+	// Final edit: full response, split across messages if needed.
+	fullText := sb.String()
+	if fullText == "" {
+		fullText = "(no response)"
+	}
+	parts := splitMessage(fullText, maxMessageLen)
+	h.editOrLog(s, ctx, channelID, msgID, sid, parts[0])
+	for _, extra := range parts[1:] {
+		if _, err := s.ChannelMessageSend(channelID, extra); err != nil {
+			h.log.WarnContext(ctx, "discord send overflow error", "session_id", sid, "error", err)
+		}
 	}
 
 	h.log.InfoContext(ctx, "channel_response",
-		"session_id", sid,
-		"latency_ms", time.Since(start).Milliseconds(),
-		"channel", "discord",
-	)
+		"session_id", sid, "latency_ms", time.Since(start).Milliseconds(), "channel", "discord-stream")
+}
 
-	// Discord has a 2,000-character limit — split long replies into chunks.
-	for _, chunk := range splitMessage(out.Text, maxMessageLen) {
-		if _, err := s.ChannelMessageSend(m.ChannelID, chunk); err != nil {
-			h.log.WarnContext(ctx, "discord send error",
-				"session_id", sid, "error", err)
-		}
+// editOrLog edits a Discord message, logging a warning on failure.
+func (h *Handler) editOrLog(s *discordgo.Session, ctx context.Context, channelID, msgID, sid, text string) {
+	if _, err := s.ChannelMessageEdit(channelID, msgID, text); err != nil {
+		h.log.WarnContext(ctx, "discord edit error", "session_id", sid, "error", err)
 	}
+}
+
+// truncateForEdit truncates text to fit within Discord's 2 000-char limit,
+// appending "…" and breaking at a word boundary when possible.
+// "…" is 3 bytes in UTF-8, so we reserve 3 bytes before the cut point.
+func truncateForEdit(text string) string {
+	const ellipsis = "…" // U+2026 — 3 bytes in UTF-8
+	if len(text) <= maxMessageLen {
+		return text
+	}
+	cut := maxMessageLen - len(ellipsis)
+	if idx := strings.LastIndexByte(text[:cut], ' '); idx > cut*3/4 {
+		cut = idx
+	}
+	return text[:cut] + ellipsis
 }
 
 // sessionKey returns a stable, unique session key for a user × channel × guild

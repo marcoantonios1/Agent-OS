@@ -194,6 +194,52 @@ func TestSplitMessage_ExactLimit(t *testing.T) {
 	}
 }
 
+// ── truncateForEdit ───────────────────────────────────────────────────────────
+
+func TestTruncateForEdit_ShortText_Unchanged(t *testing.T) {
+	text := "short message"
+	got := truncateForEdit(text)
+	if got != text {
+		t.Errorf("got %q, want unchanged", got)
+	}
+}
+
+func TestTruncateForEdit_ExactLimit_Unchanged(t *testing.T) {
+	text := strings.Repeat("a", maxMessageLen)
+	got := truncateForEdit(text)
+	if got != text {
+		t.Errorf("text at exact limit should not be truncated")
+	}
+}
+
+func TestTruncateForEdit_LongText_FitsWithinLimit(t *testing.T) {
+	text := strings.Repeat("a", maxMessageLen+500)
+	got := truncateForEdit(text)
+	if len(got) > maxMessageLen {
+		t.Errorf("truncated text length %d exceeds maxMessageLen %d", len(got), maxMessageLen)
+	}
+}
+
+func TestTruncateForEdit_LongText_EndsWithEllipsis(t *testing.T) {
+	text := strings.Repeat("a", maxMessageLen+500)
+	got := truncateForEdit(text)
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("truncated text should end with ellipsis, got %q", got[len(got)-5:])
+	}
+}
+
+func TestTruncateForEdit_BreaksAtWordBoundary(t *testing.T) {
+	// Put a space at position 1900 (past the 3/4 mark of 1999 ≈ 1499).
+	prefix := strings.Repeat("a", 1900)
+	suffix := strings.Repeat("b", 200)
+	text := prefix + " " + suffix // total > 2000
+	got := truncateForEdit(text)
+	// Should break at the space, so no "b" characters in the truncated result.
+	if strings.Contains(got, "b") {
+		t.Errorf("expected word-boundary split before 'b' run, got: %q", got[len(got)-20:])
+	}
+}
+
 func TestSplitMessage_PreservesNewlines(t *testing.T) {
 	// Build a 2001-char string with a newline at position 1600 (past the 3/4 mark
 	// of 2000 = 1500), so splitMessage prefers to break there.
