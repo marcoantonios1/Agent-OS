@@ -143,6 +143,8 @@ func Load(envFile string) (*Config, error) {
 
 		BuilderSandboxDir: envOr("BUILDER_SANDBOX_DIR", "workspace"),
 		SessionTTL:        envDuration("SESSION_TTL", 24*time.Hour),
+
+		SQLitePath: os.Getenv("SQLITE_PATH"),
 	}
 
 	if err := cfg.validate(); err != nil {
