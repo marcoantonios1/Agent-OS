@@ -83,6 +83,43 @@ This means each user has independent conversation history — switching channels
 
 ---
 
+## Streaming responses
+
+Agent OS uses a **progressive-edit** pattern for Discord responses:
+
+1. A placeholder message (`…`) appears immediately when the bot starts processing your request.
+2. The message is edited every ~500 ms as tokens arrive from the LLM — you see the response build up in real time.
+3. A final edit delivers the complete response. If the response exceeds 2,000 characters, the first message shows the first 2,000 characters and the overflow is sent as one or more additional messages.
+
+If the streaming path encounters an error, the bot falls back silently to the blocking route and sends the full response as a single message once it is ready.
+
+### Manual streaming test
+
+1. Start Agent OS with a valid `DISCORD_BOT_TOKEN`.
+2. Send the bot a question that produces a long reply, for example:
+
+   ```
+   @AgentOS Summarise everything you know about the history of the internet in detail
+   ```
+
+3. **Expected behaviour:**
+   - A `…` message appears within ~1 second.
+   - The message text grows every 500 ms as the LLM streams tokens.
+   - The final edit shows the complete response.
+   - Server logs show `channel_response channel=discord-stream` on completion.
+
+4. Send a short query to confirm fast responses still work:
+
+   ```
+   @AgentOS Hi
+   ```
+
+   **Expected:** The `…` placeholder appears and is replaced with the reply within a second or two, with no visible intermediate edits (the response completes before the first 500 ms tick).
+
+5. Disconnect your client mid-response (close Discord or kill the app) to verify graceful handling — the server should log no panic and should persist whatever partial text was generated.
+
+---
+
 ## Long replies
 
 Discord has a 2,000-character limit per message. Agent OS automatically splits longer replies into multiple messages, breaking on newlines where possible to preserve Markdown formatting.
