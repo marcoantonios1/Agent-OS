@@ -228,6 +228,7 @@ type stackConfig struct {
 // call stack.Close() when the test completes.
 func newStack(cfg stackConfig) *testStack {
 	llm := newScriptedLLM(cfg.llmResponses...)
+	llm.streamChunks = cfg.streamChunks
 	var agentLLM costguard.LLMClient = llm
 	if cfg.customLLM != nil {
 		agentLLM = cfg.customLLM
@@ -286,6 +287,14 @@ type chatRequest struct {
 type chatResponse struct {
 	SessionID string `json:"session_id"`
 	Text      string `json:"text"`
+}
+
+// postStream sends a POST /v1/chat/stream and returns the raw *http.Response.
+// The caller is responsible for closing resp.Body.
+func (ts *testStack) postStream(req chatRequest) (*http.Response, error) {
+	b, _ := json.Marshal(req)
+	resp, err := http.Post(ts.srv.URL+"/v1/chat/stream", "application/json", bytes.NewReader(b))
+	return resp, err
 }
 
 // post sends a POST /v1/chat request and decodes the response.
