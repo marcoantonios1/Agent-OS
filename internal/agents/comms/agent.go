@@ -181,6 +181,30 @@ func New(
 	}
 }
 
+// HandleStream is the streaming variant of Handle. Tool-call steps use
+// Complete(); the final text reply is streamed token-by-token via Stream().
+func (a *Agent) HandleStream(ctx context.Context, req types.AgentRequest) (<-chan string, error) {
+	slog.InfoContext(ctx, "agent_start_stream", "agent_id", string(agentID), "session_id", req.SessionID)
+
+	var profile *sessions.UserProfile
+	if raw := req.Metadata["user.profile"]; raw != "" {
+		var p sessions.UserProfile
+		if err := json.Unmarshal([]byte(raw), &p); err == nil {
+			profile = &p
+		}
+	}
+
+	msgs := make([]types.ConversationTurn, 0, len(req.History)+1)
+	msgs = append(msgs, types.ConversationTurn{Role: "system", Content: buildSystemPrompt(profile)})
+	msgs = append(msgs, req.History...)
+
+	return a.loop.RunStream(ctx, costguard.CompletionRequest{
+		Model:     "gemma4:26b",
+		Messages:  msgs,
+		MaxTokens: 4096,
+	})
+}
+
 // Handle processes a single user turn. It prepends the system prompt to the
 // conversation history and runs the agentic loop until the LLM produces a
 // final text response.

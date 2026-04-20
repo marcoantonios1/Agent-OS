@@ -201,6 +201,40 @@ header "Unknown route"
 status=$(curl -s -o /tmp/agentos_body.txt -w "%{http_code}" "$BASE_URL/does-not-exist")
 assert_status "unknown route → 404" "404" "$status"
 
+# ── 8. Streaming endpoint ─────────────────────────────────────────────────────
+header "Streaming — POST /v1/chat/stream"
+
+# Capture the raw SSE body and HTTP status in one curl call.
+stream_status=$(curl -s -o /tmp/agentos_stream.txt -w "%{http_code}" \
+    -X POST "$BASE_URL/v1/chat/stream" \
+    -H "Content-Type: application/json" \
+    -d '{"session_id":"t-stream-1","user_id":"user-1","text":"Hello"}')
+
+assert_status "POST /v1/chat/stream returns 200" "200" "$stream_status"
+
+stream_body=$(cat /tmp/agentos_stream.txt)
+assert_body_contains "response contains 'data:' SSE frames" \
+    "data:" "$stream_body"
+assert_body_contains "final frame has done:true" \
+    '"done":true' "$stream_body"
+assert_body_contains "final frame echoes session_id" \
+    '"session_id":"t-stream-1"' "$stream_body"
+
+# Validation — missing fields on streaming endpoint.
+stream_status=$(curl -s -o /tmp/agentos_stream.txt -w "%{http_code}" \
+    -X POST "$BASE_URL/v1/chat/stream" \
+    -H "Content-Type: application/json" \
+    -d '{"user_id":"u1","text":"no session"}')
+assert_status "stream: missing session_id → 400" "400" "$stream_status"
+
+# Content-Type header check (use -D to capture response headers).
+curl -s -D /tmp/agentos_stream_headers.txt -o /dev/null \
+    -X POST "$BASE_URL/v1/chat/stream" \
+    -H "Content-Type: application/json" \
+    -d '{"session_id":"t-stream-ct","user_id":"user-1","text":"Hello"}'
+assert_body_contains "stream Content-Type is text/event-stream" \
+    "text/event-stream" "$(cat /tmp/agentos_stream_headers.txt)"
+
 # ── summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "────────────────────────────────────────"

@@ -33,11 +33,13 @@ import (
 
 // scriptedLLM is a mock LLMClient that returns pre-scripted CompletionResponses
 // in FIFO order. Each Complete call pops the next response from the queue.
-// Tests will fail with a clear message if more calls are made than scripted.
+// streamChunks holds per-Stream()-call token slices (also consumed in FIFO order).
 type scriptedLLM struct {
-	mu        sync.Mutex
-	responses []costguard.CompletionResponse
-	calls     []costguard.CompletionRequest // recorded for assertions
+	mu           sync.Mutex
+	responses    []costguard.CompletionResponse
+	streamChunks [][]string // each inner slice is the tokens for one Stream() call
+	calls        []costguard.CompletionRequest
+	streamIdx    int
 }
 
 func newScriptedLLM(responses ...costguard.CompletionResponse) *scriptedLLM {
@@ -57,7 +59,22 @@ func (s *scriptedLLM) Complete(_ context.Context, req costguard.CompletionReques
 }
 
 func (s *scriptedLLM) Stream(_ context.Context, _ costguard.CompletionRequest) (<-chan costguard.StreamChunk, error) {
-	ch := make(chan costguard.StreamChunk)
+	s.mu.Lock()
+	idx := s.streamIdx
+	s.streamIdx++
+	var chunks []string
+	if idx < len(s.streamChunks) {
+		chunks = s.streamChunks[idx]
+	}
+	s.mu.Unlock()
+
+	ch := make(chan costguard.StreamChunk, len(chunks)+1)
+	for i, c := range chunks {
+		ch <- costguard.StreamChunk{Content: c, Done: i == len(chunks)-1}
+	}
+	if len(chunks) == 0 {
+		ch <- costguard.StreamChunk{Done: true}
+	}
 	close(ch)
 	return ch, nil
 }
@@ -198,7 +215,8 @@ type testStack struct {
 // stackConfig configures what providers the stack includes.
 type stackConfig struct {
 	llmResponses []costguard.CompletionResponse
-	customLLM    costguard.LLMClient      // if set, used instead of scripted responses
+	streamChunks [][]string          // per-Stream()-call token slices for scriptedLLM
+	customLLM    costguard.LLMClient // if set, used instead of scripted responses
 	emailProv    *mockEmailProvider
 	calProv      calendar.CalendarProvider
 	searchProv   websearch.SearchProvider // nil → stub (empty results)
@@ -210,6 +228,7 @@ type stackConfig struct {
 // call stack.Close() when the test completes.
 func newStack(cfg stackConfig) *testStack {
 	llm := newScriptedLLM(cfg.llmResponses...)
+	llm.streamChunks = cfg.streamChunks
 	var agentLLM costguard.LLMClient = llm
 	if cfg.customLLM != nil {
 		agentLLM = cfg.customLLM
@@ -268,6 +287,14 @@ type chatRequest struct {
 type chatResponse struct {
 	SessionID string `json:"session_id"`
 	Text      string `json:"text"`
+}
+
+// postStream sends a POST /v1/chat/stream and returns the raw *http.Response.
+// The caller is responsible for closing resp.Body.
+func (ts *testStack) postStream(req chatRequest) (*http.Response, error) {
+	b, _ := json.Marshal(req)
+	resp, err := http.Post(ts.srv.URL+"/v1/chat/stream", "application/json", bytes.NewReader(b))
+	return resp, err
 }
 
 // post sends a POST /v1/chat request and decodes the response.
