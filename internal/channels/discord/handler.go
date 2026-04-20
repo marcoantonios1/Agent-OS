@@ -19,6 +19,10 @@ import (
 // maxMessageLen is Discord's per-message character limit.
 const maxMessageLen = 2000
 
+// editInterval is how often the in-progress message is edited while streaming.
+// 500 ms gives ~2 edits/sec — well within Discord's ~5 edits/sec rate limit.
+const editInterval = 500 * time.Millisecond
+
 // Handler listens for Discord messages and routes them through the shared
 // Dispatcher (router.Router). One Handler per bot token.
 type Handler struct {
