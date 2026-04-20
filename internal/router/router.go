@@ -295,6 +295,163 @@ func (r *Router) dispatch(
 	return resp, nil
 }
 
+// RouteStream is the streaming counterpart to Route. It classifies the intent,
+// dispatches to a StreamingAgent (if the resolved agent implements that interface),
+// and returns a channel of string tokens. The channel is closed when the response
+// is complete or the context is cancelled. Session history is persisted once the
+// stream ends — including partial text if the client disconnects early.
+func (r *Router) RouteStream(ctx context.Context, msg types.InboundMessage) (<-chan string, error) {
+	sess, err := r.loadOrCreate(msg)
+	if err != nil {
+		return nil, fmt.Errorf("router: session: %w", err)
+	}
+
+	if r.Approvals != nil && isApprovalMessage(msg.Text) {
+		for _, rec := range r.Approvals.ListPending(msg.SessionID) {
+			r.Approvals.Grant(msg.SessionID, rec.ActionID)
+		}
+	}
+
+	history := append(sess.History, types.ConversationTurn{ //nolint:gocritic
+		Role:    "user",
+		Content: msg.Text,
+	})
+
+	intents, classifyErr := r.Classifier.Classify(ctx, msg.SessionID, msg.Text, history)
+	if classifyErr != nil {
+		r.log.WarnContext(ctx, "classifier error, defaulting to unknown",
+			"session_id", msg.SessionID, "error", classifyErr)
+	}
+
+	r.log.InfoContext(ctx, "routing stream",
+		"session_id", msg.SessionID, "user_id", msg.UserID, "intents", intents)
+
+	ctx = approval.WithSessionID(ctx, msg.SessionID)
+	ctx = sessions.WithUserID(ctx, msg.UserID)
+
+	var rawCh <-chan string
+	valid := validIntents(intents)
+
+	switch {
+	case len(valid) == 0:
+		rawCh = singleChunk(unknownIntentReply)
+	case len(valid) == 1:
+		rawCh, err = r.streamDispatch(ctx, msg, valid[0], history, sess.Metadata)
+		if err != nil {
+			return nil, fmt.Errorf("router: stream dispatch: %w", err)
+		}
+	default:
+		// Compound intents: fall back to blocking dispatch, emit as one chunk.
+		resp, dispatchErr := r.dispatchAll(ctx, msg, intents, history, sess.Metadata)
+		if dispatchErr != nil {
+			return nil, fmt.Errorf("router: dispatch: %w", dispatchErr)
+		}
+		rawCh = singleChunk(resp.Output)
+	}
+
+	// Wrap rawCh: collect the full text, persist history when the stream closes.
+	out := make(chan string)
+	go func() {
+		defer close(out)
+		var sb strings.Builder
+		for chunk := range rawCh {
+			sb.WriteString(chunk)
+			select {
+			case out <- chunk:
+			case <-ctx.Done():
+				// Client disconnected — drain source then persist whatever arrived.
+				for range rawCh {} //nolint:revive
+				if err := r.persistTurns(msg.SessionID, msg.Text, sb.String()); err != nil {
+					r.log.WarnContext(ctx, "failed to persist turns (disconnect)",
+						"session_id", msg.SessionID, "error", err)
+				}
+				return
+			}
+		}
+		if err := r.persistTurns(msg.SessionID, msg.Text, sb.String()); err != nil {
+			r.log.WarnContext(ctx, "failed to persist turns", "session_id", msg.SessionID, "error", err)
+		}
+	}()
+
+	return out, nil
+}
+
+// streamDispatch dispatches a single intent using the streaming path when
+// available, falling back to a blocking Handle wrapped in a single-chunk channel.
+func (r *Router) streamDispatch(
+	ctx context.Context,
+	msg types.InboundMessage,
+	intent Intent,
+	history []types.ConversationTurn,
+	sessionMeta map[string]string,
+) (<-chan string, error) {
+	if intent == IntentUnknown {
+		return singleChunk(unknownIntentReply), nil
+	}
+
+	agent, ok := r.Agents[intent]
+	if !ok {
+		r.log.WarnContext(ctx, "no agent registered for intent",
+			"session_id", msg.SessionID, "intent", intent)
+		return singleChunk(unknownIntentReply), nil
+	}
+
+	agentMeta := make(map[string]string, len(sessionMeta)+1)
+	for k, v := range sessionMeta {
+		agentMeta[k] = v
+	}
+	if r.Users != nil {
+		if profile, err := r.Users.GetUser(msg.UserID); err == nil {
+			if b, err := json.Marshal(profile); err == nil {
+				agentMeta["user.profile"] = string(b)
+			}
+		}
+	}
+
+	req := types.AgentRequest{
+		SessionID: msg.SessionID,
+		UserID:    msg.UserID,
+		Intent:    string(intent),
+		History:   history,
+		Input:     msg.Text,
+		Metadata:  agentMeta,
+	}
+
+	if sa, ok := agent.(StreamingAgent); ok {
+		r.log.InfoContext(ctx, "agent_stream_dispatch",
+			"session_id", msg.SessionID, "agent_id", string(intent))
+		return sa.HandleStream(ctx, req)
+	}
+
+	// Fallback: non-streaming agent — wrap its output as a single chunk.
+	r.log.InfoContext(ctx, "agent_dispatch_nonstream",
+		"session_id", msg.SessionID, "agent_id", string(intent))
+	resp, err := agent.Handle(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("agent %s: %w", intent, err)
+	}
+	return singleChunk(resp.Output), nil
+}
+
+// validIntents filters out IntentUnknown entries.
+func validIntents(intents []Intent) []Intent {
+	out := make([]Intent, 0, len(intents))
+	for _, i := range intents {
+		if i != IntentUnknown {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// singleChunk returns a pre-closed channel containing one string value.
+func singleChunk(text string) <-chan string {
+	ch := make(chan string, 1)
+	ch <- text
+	close(ch)
+	return ch
+}
+
 // persistTurns appends both the user and assistant turns to the session store.
 func (r *Router) persistTurns(sessionID, userText, assistantText string) error {
 	if err := r.Sessions.AppendTurn(sessionID, "user", userText); err != nil {
