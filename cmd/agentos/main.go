@@ -21,6 +21,7 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/memory"
 	"github.com/marcoantonios1/Agent-OS/internal/observability"
 	"github.com/marcoantonios1/Agent-OS/internal/router"
+	"github.com/marcoantonios1/Agent-OS/internal/sessions"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/calendar"
 	calendarGoogle "github.com/marcoantonios1/Agent-OS/internal/tools/calendar/google"
 	calendarOutlook "github.com/marcoantonios1/Agent-OS/internal/tools/calendar/outlook"
@@ -48,8 +49,24 @@ func main() {
 
 	store := memory.NewStore()
 	defer store.Close()
-	projectStore := memory.NewProjectStore()
-	userStore := memory.NewUserStore()
+
+	// User and project stores: SQLite when SQLITE_PATH is set, in-memory otherwise.
+	var projectStore sessions.ProjectStore
+	var userStore sessions.UserStore
+	if cfg.SQLiteConfigured() {
+		db, err := memory.OpenDB(cfg.SQLitePath)
+		if err != nil {
+			slog.Error("sqlite: failed to open database", "path", cfg.SQLitePath, "error", err)
+			os.Exit(1)
+		}
+		projectStore = memory.NewSQLiteProjectStore(db)
+		userStore = memory.NewSQLiteUserStore(db)
+		slog.Info("using SQLite persistence", "path", cfg.SQLitePath)
+	} else {
+		projectStore = memory.NewProjectStore()
+		userStore = memory.NewUserStore()
+		slog.Warn("SQLITE_PATH not set — using in-memory stores (data lost on restart)")
+	}
 
 	approvals := approval.NewMemoryStore()
 
