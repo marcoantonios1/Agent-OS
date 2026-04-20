@@ -165,6 +165,12 @@ func (c *Config) validate() error {
 	return nil
 }
 
+// SQLiteConfigured reports whether a SQLite path is set.
+// When false the server falls back to in-memory stores.
+func (c *Config) SQLiteConfigured() bool {
+	return c.SQLitePath != ""
+}
+
 // DiscordConfigured reports whether a Discord bot token is present.
 func (c *Config) DiscordConfigured() bool {
 	return c.DiscordBotToken != ""
