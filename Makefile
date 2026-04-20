@@ -1,4 +1,6 @@
-.PHONY: build test lint run test-api test-email test-calendar
+.PHONY: build test lint run migrate test-api test-email test-calendar
+
+DB ?= ./data/agentos.db
 
 build:
 	go build ./...
@@ -11,6 +13,9 @@ lint:
 
 run:
 	go run ./cmd/agentos/
+
+migrate:
+	go run ./cmd/migrate/ -path $(DB)
 
 test-api:
 	bash scripts/test_api.sh
