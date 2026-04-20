@@ -102,6 +102,14 @@ type Config struct {
 	// SessionTTL is how long idle sessions are kept in memory before expiry.
 	// Env: SESSION_TTL (default: 24h). Accepts any value parseable by time.ParseDuration.
 	SessionTTL time.Duration
+
+	// ── Persistence ───────────────────────────────────────────────────────────
+
+	// SQLitePath is the file path for the SQLite database used to persist user
+	// profiles and project state. When empty, in-memory stores are used and data
+	// is lost on restart (acceptable for local development without any config).
+	// Env: SQLITE_PATH (default: "" — in-memory)
+	SQLitePath string
 }
 
 // Load reads configuration from the given .env file (if it exists) and then
@@ -135,6 +143,8 @@ func Load(envFile string) (*Config, error) {
 
 		BuilderSandboxDir: envOr("BUILDER_SANDBOX_DIR", "workspace"),
 		SessionTTL:        envDuration("SESSION_TTL", 24*time.Hour),
+
+		SQLitePath: os.Getenv("SQLITE_PATH"),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -153,6 +163,12 @@ func (c *Config) validate() error {
 		return errors.New("config: " + strings.Join(missing, "; "))
 	}
 	return nil
+}
+
+// SQLiteConfigured reports whether a SQLite path is set.
+// When false the server falls back to in-memory stores.
+func (c *Config) SQLiteConfigured() bool {
+	return c.SQLitePath != ""
 }
 
 // DiscordConfigured reports whether a Discord bot token is present.
