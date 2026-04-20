@@ -10,6 +10,94 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
 
+// RunStream executes the agentic loop using Complete() for tool-call steps and
+// Stream() for the final text generation step. Returns a channel of tokens.
+// The channel is closed when the stream ends, the step limit is reached, or ctx
+// is cancelled.
+func (l *AgenticLoop) RunStream(ctx context.Context, req costguard.CompletionRequest) (<-chan string, error) {
+	maxSteps := l.MaxSteps
+	if maxSteps <= 0 {
+		maxSteps = defaultMaxSteps
+	}
+
+	msgs := make([]types.ConversationTurn, len(req.Messages))
+	copy(msgs, req.Messages)
+	req.Tools = l.Registry.Definitions()
+
+	for step := range maxSteps {
+		req.Messages = msgs
+
+		resp, err := l.Client.Complete(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("agentic loop stream step %d: LLM error: %w", step+1, err)
+		}
+
+		if len(resp.ToolCalls) == 0 {
+			// All tool work is done — stream the final reply.
+			slog.InfoContext(ctx, "agentic loop stream: dispatching final step", "tool_steps", step)
+			chunks, err := l.Client.Stream(ctx, req)
+			if err != nil {
+				return nil, fmt.Errorf("agentic loop stream final step: %w", err)
+			}
+			return streamChunksToStrings(ctx, chunks), nil
+		}
+
+		slog.InfoContext(ctx, "agentic loop stream tool calls", "step", step+1, "count", len(resp.ToolCalls))
+		msgs = append(msgs, types.ConversationTurn{Role: "assistant", ToolCalls: resp.ToolCalls})
+		for _, tc := range resp.ToolCalls {
+			result, execErr := l.Registry.Execute(ctx, tc.Name, json.RawMessage(tc.Arguments))
+			var content string
+			if execErr != nil {
+				slog.WarnContext(ctx, "tool execution error", "tool", tc.Name, "error", execErr)
+				content = fmt.Sprintf(`{"error":%q}`, execErr.Error())
+			} else {
+				content = result
+			}
+			msgs = append(msgs, types.ConversationTurn{
+				Role:       "tool",
+				ToolCallID: tc.ID,
+				Content:    content,
+			})
+		}
+	}
+
+	return nil, fmt.Errorf("agentic loop stream: exceeded %d steps without a final response", maxSteps)
+}
+
+// streamChunksToStrings adapts a <-chan costguard.StreamChunk to <-chan string,
+// forwarding non-empty Content and stopping on Done, Error, or ctx cancellation.
+func streamChunksToStrings(ctx context.Context, in <-chan costguard.StreamChunk) <-chan string {
+	out := make(chan string)
+	go func() {
+		defer close(out)
+		for {
+			select {
+			case chunk, ok := <-in:
+				if !ok {
+					return
+				}
+				if chunk.Error != nil {
+					slog.WarnContext(ctx, "stream chunk error", "error", chunk.Error)
+					return
+				}
+				if chunk.Content != "" {
+					select {
+					case out <- chunk.Content:
+					case <-ctx.Done():
+						return
+					}
+				}
+				if chunk.Done {
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out
+}
+
 const defaultMaxSteps = 10
 
 // AgenticLoop runs the LLM → tool-call → execute → feed-back cycle until the

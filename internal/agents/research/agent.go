@@ -64,6 +64,22 @@ func New(llm costguard.LLMClient, reg *tools.ToolRegistry) *Agent {
 	}
 }
 
+// HandleStream is the streaming variant of Handle.
+func (a *Agent) HandleStream(ctx context.Context, req types.AgentRequest) (<-chan string, error) {
+	slog.InfoContext(ctx, "agent_start_stream", "agent_id", string(agentID), "session_id", req.SessionID)
+
+	msgs := make([]types.ConversationTurn, 0, len(req.History)+2)
+	msgs = append(msgs, types.ConversationTurn{Role: "system", Content: systemPrompt})
+	msgs = append(msgs, req.History...)
+	msgs = append(msgs, types.ConversationTurn{Role: "user", Content: req.Input})
+
+	return a.loop.RunStream(ctx, costguard.CompletionRequest{
+		Model:     "claude-sonnet-4-6",
+		Messages:  msgs,
+		MaxTokens: 4096,
+	})
+}
+
 // Handle processes a single user research request.
 func (a *Agent) Handle(ctx context.Context, req types.AgentRequest) (types.AgentResponse, error) {
 	slog.InfoContext(ctx, "agent_start",

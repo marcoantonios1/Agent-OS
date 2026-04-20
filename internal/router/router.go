@@ -31,6 +31,13 @@ type Agent interface {
 	Handle(ctx context.Context, req types.AgentRequest) (types.AgentResponse, error)
 }
 
+// StreamingAgent is an optional extension of Agent. When implemented, the router
+// uses HandleStream for POST /v1/chat/stream, streaming tokens as they arrive.
+// Agents that do not implement this interface fall back to a single-chunk response.
+type StreamingAgent interface {
+	HandleStream(ctx context.Context, req types.AgentRequest) (<-chan string, error)
+}
+
 // Router is the single entry point for all inbound messages. It owns the
 // classify → dispatch → respond loop and keeps session history consistent.
 type Router struct {
