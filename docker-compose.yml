@@ -1,0 +1,35 @@
+services:
+
+  # ── migrate ──────────────────────────────────────────────────────────────────
+  # Runs database migrations once and exits. The agentos service will not start
+  # until this container exits successfully (exit code 0).
+  migrate:
+    build: .
+    entrypoint: ["./migrate"]
+    environment:
+      SQLITE_PATH: /data/agentos.db
+    volumes:
+      - db_data:/data
+    restart: "no"
+
+  # ── agentos ──────────────────────────────────────────────────────────────────
+  agentos:
+    build: .
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      # Override the SQLite path to use the named volume, regardless of .env.
+      SQLITE_PATH: /data/agentos.db
+    ports:
+      - "${PORT:-9091}:9091"
+    volumes:
+      - db_data:/data
+      - workspace:/app/workspace
+    restart: unless-stopped
+
+volumes:
+  db_data:    # persists the SQLite database across container restarts
+  workspace:  # persists the Builder Agent sandbox across restarts
