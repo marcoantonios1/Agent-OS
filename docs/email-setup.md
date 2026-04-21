@@ -4,7 +4,7 @@ Agent OS supports two email providers out of the box: **Gmail** and **Outlook** 
 
 ---
 
-## Gmail (antoniosm384@gmail.com)
+## Gmail
 
 ### 1. Create OAuth2 credentials
 
@@ -45,7 +45,7 @@ make test-email
 
 ---
 
-## Outlook (marco_antonios1@outlook.com)
+## Outlook
 
 Outlook uses the **device code flow** — no redirect URIs, no client secret, no copy-pasting codes.
 
