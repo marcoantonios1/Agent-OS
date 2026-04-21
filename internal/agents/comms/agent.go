@@ -21,6 +21,7 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/tools"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/calendar"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/email"
+	"github.com/marcoantonios1/Agent-OS/internal/tools/reminder"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/userprofile"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
@@ -41,6 +42,9 @@ const systemPromptBase = `You are the Comms Agent for Agent OS — a personal AI
 - calendar_read       — read a single event by ID
 - calendar_create     — create a new calendar event (REQUIRES user approval)
 - calendar_update     — update an existing calendar event (REQUIRES user approval)
+- reminder_set        — schedule a follow-up reminder to be sent at a future time
+- reminder_cancel     — cancel a previously scheduled reminder
+- reminder_list       — list all pending reminders for the user
 
 ## Rules you must always follow
 1. ALWAYS draft before sending. When the user asks you to send an email, call email_draft
@@ -66,6 +70,10 @@ const systemPromptBase = `You are the Comms Agent for Agent OS — a personal AI
    match their communication style, and address contacts by their stored name. When the
    user states a lasting preference ("always sign off as Marco", "my timezone is UTC+3"),
    call user_profile_update to persist it for future conversations.
+9. REMINDERS — When the user asks to be reminded about something, call reminder_set with
+   a clear message and a relative or absolute time ("in 30 minutes", "in 2 hours",
+   "tomorrow at 9am"). Confirm the scheduled time back to the user. Use reminder_list
+   to show pending reminders and reminder_cancel to remove one.
 
 ## Workflow patterns
 - "Check my emails"           → email_list, then summarise each
@@ -146,17 +154,23 @@ type Agent struct {
 //   - calProv is the calendar backend (Google, Outlook, or nil to omit calendar tools).
 //   - store is the approval store shared with the router.
 //   - users is the persistent user profile store (always required).
+//   - reminders is the reminder store (always required).
 func New(
 	llm costguard.LLMClient,
 	emailProv email.EmailProvider,
 	calProv calendar.CalendarProvider,
 	store approval.Store,
 	users sessions.UserStore,
+	reminders sessions.ReminderStore,
 ) *Agent {
 	reg := tools.NewRegistry()
 
 	reg.Register(userprofile.NewReadTool(users))
 	reg.Register(userprofile.NewUpdateTool(users))
+
+	reg.Register(reminder.NewSetTool(reminders))
+	reg.Register(reminder.NewCancelTool(reminders))
+	reg.Register(reminder.NewListTool(reminders))
 
 	if emailProv != nil {
 		reg.Register(email.NewListTool(emailProv))
