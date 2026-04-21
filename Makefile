@@ -12,7 +12,7 @@ lint:
 	go vet ./...
 
 run:
-	go run ./cmd/agentos/
+	docker compose up --build
 
 migrate:
 	go run ./cmd/migrate/ -path $(DB)

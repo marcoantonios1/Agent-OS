@@ -1,0 +1,31 @@
+# Version control
+.git
+.gitignore
+
+# Local environment — never bake secrets into the image
+.env
+.env.*
+
+# Claude Code
+.claude
+
+# macOS
+.DS_Store
+
+# Docs and non-build files
+README.md
+LICENSE
+docs/
+
+# Dev scripts and tools (not compiled into the image)
+scripts/
+
+# Local data / SQLite files
+data/
+
+# Test artefacts and sandbox output
+test/integration/testdata/
+workspace/
+
+# Logs
+*.log
