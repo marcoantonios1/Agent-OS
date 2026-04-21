@@ -206,10 +206,11 @@ func newWebSearchRegistry(prov websearch.SearchProvider) *tools.ToolRegistry {
 
 // testStack holds the full HTTP test stack for one scenario.
 type testStack struct {
-	srv       *httptest.Server
-	store     *memory.Store
-	llm       *scriptedLLM
-	emailProv *mockEmailProvider
+	srv          *httptest.Server
+	store        *memory.Store
+	llm          *scriptedLLM
+	emailProv    *mockEmailProvider
+	projectStore *memory.ProjectStore
 }
 
 // stackConfig configures what providers the stack includes.
@@ -221,6 +222,7 @@ type stackConfig struct {
 	calProv      calendar.CalendarProvider
 	searchProv   websearch.SearchProvider // nil → stub (empty results)
 	userStore    *memory.UserStore        // nil → empty in-memory store
+	projectStore *memory.ProjectStore     // nil → empty in-memory store
 	sandboxDir   string
 }
 
@@ -252,9 +254,14 @@ func newStack(cfg stackConfig) *testStack {
 		userStore = memory.NewUserStore()
 	}
 
+	projectStore := cfg.projectStore
+	if projectStore == nil {
+		projectStore = memory.NewProjectStore()
+	}
+
 	agents := map[router.Intent]router.Agent{
 		router.IntentComms:    comms.New(agentLLM, cfg.emailProv, cfg.calProv, approvals, userStore, memory.NewReminderStore()),
-		router.IntentBuilder:  builder.New(agentLLM, store, code.Config{SandboxDir: sandboxDir}, memory.NewProjectStore()),
+		router.IntentBuilder:  builder.New(agentLLM, store, code.Config{SandboxDir: sandboxDir}, projectStore),
 		router.IntentResearch: research.New(agentLLM, newWebSearchRegistry(searchProv)),
 	}
 
@@ -264,10 +271,11 @@ func newStack(cfg stackConfig) *testStack {
 	srv := httptest.NewServer(h)
 
 	return &testStack{
-		srv:       srv,
-		store:     store,
-		llm:       llm,
-		emailProv: cfg.emailProv,
+		srv:          srv,
+		store:        store,
+		llm:          llm,
+		emailProv:    cfg.emailProv,
+		projectStore: projectStore,
 	}
 }
 
