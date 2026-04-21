@@ -1,72 +1,81 @@
-# Agent-OS
+# Agent OS
 
-A multi-agent AI system with a single entry point that routes requests to specialised agents (comms, builder, research) powered by Costguard.
+A multi-agent AI personal assistant that routes requests to specialised agents — Comms, Builder, and Research — through a single entry point. Agents share session history, a persistent user profile, and a structured tool framework.
 
 ## Architecture
 
 ```
-Channels (web / discord / whatsApp / telegram)
-              │
-              ▼
-         Router / App
-              │
-    ┌─────────┼─────────┐
-    ▼         ▼         ▼
- Comms     Builder   Research
- Agent      Agent     Agent
-              │
-    ┌─────────┼─────────┐
-    ▼         ▼         ▼
- Memory  Orchestration CostGuard
-              │
-    ┌─────────┼─────────┐
-    ▼         ▼         ▼
- Email    Calendar   WebSearch
-  Tool      Tool       Tool
+Channels (Web · Discord)
+            │
+            ▼
+       Router / Classifier
+            │
+   ┌────────┼────────┐
+   ▼        ▼        ▼
+Comms    Builder  Research
+Agent     Agent    Agent
+   │        │        │
+   ▼        ▼        ▼
+Email   Code/File  WebSearch
+Calendar  Shell    WebFetch
+UserProfile Project
+Reminders  Load/List
 ```
+
+**Request flow:** channel receives message → router classifies intent → one or more agents run their agentic loop (LLM ↔ tools) → response merged and returned → session history persisted.
 
 ## What's built
 
-| # | Area | Status |
+| # | Capability | Status |
 |---|---|---|
-| 1 | Repository structure, Go module, no-op HTTP server | Done |
-| 2 | Core types — `InboundMessage`, `OutboundMessage`, `AgentRequest`, `AgentResponse`, `Session` | Done |
-| 3 | Costguard LLM client — `Complete`, `Stream`, retry with exponential backoff | Done |
-| 4 | Session memory store — in-memory, TTL expiry, thread-safe, swappable interface | Done |
-| 5 | Intent classifier — LLM-based, routes to `comms` / `builder` / `research` / `unknown` | Done |
-| 6 | Router Agent — session load/create, classify, dispatch, history persistence | Done |
-| 7 | Web channel — `POST /v1/chat`, `GET /healthz`, request ID, logging, panic recovery | Done |
-| 8 | Tool framework — `Tool` interface, `ToolRegistry`, agentic loop (LLM → tool → repeat) | Done |
-| 9 | Email tools — `email_list`, `email_read`, `email_search`, `email_draft` with Gmail + Outlook | Done |
+| 1 | Repository structure, Go module, HTTP server skeleton | Done |
+| 2 | Core types — `Session`, `AgentRequest/Response`, `ConversationTurn` | Done |
+| 3 | Costguard LLM client — `Complete`, `Stream`, exponential backoff retry | Done |
+| 4 | Session store — in-memory, TTL expiry, thread-safe | Done |
+| 5 | Intent classifier — LLM-based, routes to `comms / builder / research / unknown` | Done |
+| 6 | Router — session lifecycle, classify, dispatch, history persistence | Done |
+| 7 | Web channel — `POST /v1/chat`, `GET /healthz`, `GET /readyz`, request ID, logging | Done |
+| 8 | Tool framework — `Tool` interface, `ToolRegistry`, multi-step agentic loop | Done |
+| 9 | Email tools — `email_list/read/search/draft/send` · Gmail + Outlook providers | Done |
+| 10 | Calendar tools — `calendar_list/read/create/update` · Google + Outlook providers | Done |
+| 11 | Approval gate — `email_send` and `calendar_create/update` require explicit confirmation | Done |
+| 12 | Discord channel — bot with DM + prefix routing, progressive streaming edits | Done |
+| 13 | Research Agent — `web_search`, `web_fetch` tools · Brave Search API | Done |
+| 14 | Builder Agent — requirements → spec → tasks → codegen → review phase workflow | Done |
+| 15 | User profile — `user_profile_read/update` tools, persisted preferences and contacts | Done |
+| 16 | Project store — builder projects survive session expiry via `project_list/load` | Done |
+| 17 | Context injection — user profile and project state injected into agent system prompts | Done |
+| 18 | Streaming endpoint — `POST /v1/chat/stream` SSE, per-token delivery | Done |
+| 19 | SQLite persistence — user profiles, projects, and reminders persist across restarts | Done |
+| 20 | Reminder tool — `reminder_set/cancel/list`, background worker fires due reminders | Done |
+| 21 | Docker — multi-stage `Dockerfile`, `docker-compose` with migration init container | Done |
 
 ## Quick start
 
+### With Docker (recommended)
+
 ```bash
-# build
-make build
+cp .env.example .env
+# fill in COSTGUARD_URL and any optional credentials
+docker compose up
+```
 
-# run the server (stub LLM if COSTGUARD_URL is not set)
-make run
+`docker compose up` runs database migrations first, then starts the server on port `9091`. Data is persisted in named Docker volumes (`db_data`, `workspace`).
 
-# unit tests
-make test
+### Locally
 
-# API smoke tests (auto-starts server if not running)
-make test-api
+```bash
+cp .env.example .env
+# fill in at minimum: COSTGUARD_URL, SQLITE_PATH
 
-# email tool tests (uses live Gmail or Outlook if credentials are set)
-make test-email
+make migrate   # apply database migrations
+make run       # start the server (ctrl+c to stop)
+make test      # run all tests with race detector
 ```
 
 ## Configuration
 
-Copy `.env.example` to `.env` and fill in the values you need:
-
-```bash
-cp .env.example .env
-```
-
-Configuration is loaded at startup from `.env` (if present) and then from actual environment variables, which always take precedence over the file.
+Copy `.env.example` to `.env` and fill in the values you need. Environment variables always take precedence over the file.
 
 ### Server
 
@@ -75,14 +84,20 @@ Configuration is loaded at startup from `.env` (if present) and then from actual
 | `COSTGUARD_URL` | **Yes** | — | Costguard gateway base URL (e.g. `http://localhost:8080`) |
 | `COSTGUARD_API_KEY` | No | — | Bearer token for the Costguard gateway |
 | `PORT` | No | `9091` | TCP port the HTTP server listens on |
-| `LOG_LEVEL` | No | `info` | Minimum log level: `debug`, `info`, `warn`, `error` |
-| `SESSION_TTL` | No | `24h` | How long idle sessions are kept in memory (e.g. `30m`, `12h`) |
+| `LOG_LEVEL` | No | `info` | Log level: `debug`, `info`, `warn`, `error` |
+| `SESSION_TTL` | No | `24h` | Idle session expiry (e.g. `30m`, `12h`) |
+
+### Persistence
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `SQLITE_PATH` | No | — | Path to the SQLite database (e.g. `./data/agentos.db`). When unset, in-memory stores are used and all data is lost on restart. |
 
 ### Builder Agent
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `BUILDER_SANDBOX_DIR` | No | `workspace` | Root directory for all file/shell operations by the Builder Agent |
+| `BUILDER_SANDBOX_DIR` | No | `workspace` | Root directory for Builder Agent file and shell operations |
 
 ### Discord channel
 
@@ -90,85 +105,129 @@ Configuration is loaded at startup from `.env` (if present) and then from actual
 |---|---|---|
 | `DISCORD_BOT_TOKEN` | For Discord | Bot token — create one at [discord.com/developers](https://discord.com/developers/applications) |
 | `DISCORD_GUILD_ID` | No | Restricts the bot to one server (recommended for personal use) |
+| `DISCORD_PREFIX` | No | Require a prefix (e.g. `!ai`) in server channels; DMs are always routed |
 
-If `DISCORD_BOT_TOKEN` is absent the server starts normally and only the web channel is active.
+If `DISCORD_BOT_TOKEN` is absent the server starts normally with only the web channel active.
 
-### Research Agent (web search)
+### Research Agent
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `SEARCH_API_KEY` | For web search | — | Brave Search API key — get one free at [brave.com/search/api](https://brave.com/search/api/) |
-| `SEARCH_PROVIDER` | No | `brave` | Search backend — only `"brave"` is supported today |
+| `SEARCH_API_KEY` | For live search | — | Brave Search API key — get one free at [brave.com/search/api](https://brave.com/search/api/) |
+| `SEARCH_PROVIDER` | No | `brave` | Search backend (`brave` is the only supported provider) |
 
-If `SEARCH_API_KEY` is not set the server still starts, but the Research Agent falls back to LLM training knowledge without live web access.
+If `SEARCH_API_KEY` is absent the Research Agent still starts but uses LLM training knowledge only — no live web access.
 
 ### Google (Gmail + Google Calendar)
 
-A single refresh token covers both Gmail and Google Calendar. Run `go run ./cmd/tool/googleauth/` once — see [docs/email-setup.md](docs/email-setup.md) and [docs/calendar-setup.md](docs/calendar-setup.md) for full instructions.
+A single refresh token covers both services. Run the one-time setup tool:
+
+```bash
+go run ./cmd/tool/googleauth/
+```
+
+See [docs/email-setup.md](docs/email-setup.md) and [docs/calendar-setup.md](docs/calendar-setup.md) for full instructions.
 
 | Variable | Required | Description |
 |---|---|---|
 | `GOOGLE_CLIENT_ID` | For Google | OAuth2 client ID |
 | `GOOGLE_CLIENT_SECRET` | For Google | OAuth2 client secret |
-| `GOOGLE_REFRESH_TOKEN` | For Google | Long-lived refresh token (covers Gmail + Calendar) |
+| `GOOGLE_REFRESH_TOKEN` | For Google | Long-lived refresh token (Gmail + Calendar) |
 
 ### Microsoft (Outlook Mail + Outlook Calendar)
 
-A single refresh token covers both Outlook Mail and Outlook Calendar. Run `go run ./cmd/tool/microsoftauth/` once — see [docs/email-setup.md](docs/email-setup.md) and [docs/calendar-setup.md](docs/calendar-setup.md) for full instructions.
+A single refresh token covers both services. Run the one-time setup tool:
+
+```bash
+go run ./cmd/tool/microsoftauth/
+```
 
 | Variable | Required | Description |
 |---|---|---|
 | `MICROSOFT_CLIENT_ID` | For Microsoft | Azure app client ID |
-| `MICROSOFT_REFRESH_TOKEN` | For Microsoft | Long-lived refresh token (covers Outlook Mail + Calendar) |
+| `MICROSOFT_REFRESH_TOKEN` | For Microsoft | Long-lived refresh token (Outlook Mail + Calendar) |
 
 ## API
 
 ### `POST /v1/chat`
 
+Standard request/response.
+
 ```json
 // request
-{ "session_id": "abc", "user_id": "u1", "text": "Send Alice an email about the meeting" }
+{ "session_id": "abc", "user_id": "u1", "text": "Check my emails" }
 
 // response
-{ "session_id": "abc", "text": "..." }
+{ "session_id": "abc", "text": "You have 3 new emails..." }
+```
+
+### `POST /v1/chat/stream`
+
+Server-Sent Events — tokens delivered as they arrive.
+
+```bash
+curl -N -X POST http://localhost:9091/v1/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"abc","user_id":"u1","text":"Summarise my inbox"}'
+```
+
+```
+data: {"delta":"You "}
+data: {"delta":"have "}
+data: {"delta":"3 new emails."}
+data: {"done":true}
 ```
 
 ### `GET /healthz`
 
-Returns `200 ok`.
+Returns `200 ok` — liveness probe.
+
+### `GET /readyz`
+
+Returns `200 ok` when all readiness checks pass — readiness probe.
 
 ## Project layout
 
 ```
 cmd/
   agentos/              — main server entrypoint
+  migrate/              — standalone migration CLI (also used as Docker init container)
   tool/
-    googleauth/         — one-time Google OAuth2 setup (Gmail + Calendar)
-    microsoftauth/      — one-time Microsoft device code setup (Mail + Calendar)
-    emailtest/          — manual email tool test harness
-    calendartest/       — manual calendar tool test harness
+    googleauth/         — one-time Google OAuth2 token setup
+    microsoftauth/      — one-time Microsoft device code token setup
+    emailtest/          — manual email tool smoke test
+    calendartest/       — manual calendar tool smoke test
 internal/
-  types/                — shared message and session types
-  costguard/            — LLM client interface + HTTP implementation
-  sessions/             — SessionStore interface
-  memory/               — in-memory SessionStore implementation
-  router/               — intent classifier + Router Agent
-  channels/web/         — HTTP handler (web chat channel)
-  tools/                — Tool interface, ToolRegistry, agentic loop
-  tools/email/          — email tools + EmailProvider interface
-  tools/email/gmail/    — Gmail provider
-  tools/email/outlook/  — Outlook provider
-  tools/calendar/       — calendar tools + CalendarProvider interface
-  tools/calendar/google/  — Google Calendar provider
-  tools/calendar/outlook/ — Outlook Calendar provider
-  channels/discord/       — Discord gateway handler
-  tools/websearch/        — web_search + web_fetch tools + SearchProvider interface
-  tools/websearch/brave/  — Brave Search API implementation
-  agents/research/        — Research Agent (web search + synthesis)
+  types/                — shared message, session, and agent types
+  costguard/            — LLM client (Complete + Stream) with retry
+  sessions/             — SessionStore, UserStore, ProjectStore, ReminderStore interfaces
+  memory/               — in-memory and SQLite implementations of all stores
+  approval/             — approval gate for sensitive tool actions
+  router/               — intent classifier, Router, compound dispatch
+  channels/
+    web/                — HTTP handler: /v1/chat, /v1/chat/stream, /healthz, /readyz
+    discord/            — Discord gateway: DM + prefix routing, streaming edits
+  agents/
+    comms/              — Comms Agent (email + calendar + reminders + user profile)
+    builder/            — Builder Agent (requirements → spec → tasks → codegen → review)
+    research/           — Research Agent (web search + synthesis)
+  tools/
+    loop.go             — agentic loop (Complete for tool steps, Stream for final reply)
+    email/              — email_list/read/search/draft/send + Gmail/Outlook providers
+    calendar/           — calendar_list/read/create/update + Google/Outlook providers
+    websearch/          — web_search, web_fetch + Brave provider
+    userprofile/        — user_profile_read, user_profile_update
+    project/            — project_list, project_load
+    reminder/           — reminder_set, reminder_cancel, reminder_list + background worker
+    code/               — file_read, file_write, file_list, shell_run (Builder sandbox)
+  app/                  — config loading from .env + environment
+  observability/        — structured logging setup
+migrations/
+  001_initial_schema.sql
+  002_reminders_created_at.sql
 docs/
-  email-setup.md        — Gmail and Outlook OAuth setup guide
-  calendar-setup.md     — Google and Outlook Calendar setup guide
-scripts/
-  test_api.sh           — HTTP API smoke tests
-  test_email.sh         — email tool tests
+  email-setup.md
+  calendar-setup.md
+test/
+  integration/          — full HTTP stack tests with mocked LLM and providers
 ```
