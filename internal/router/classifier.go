@@ -124,7 +124,7 @@ func (c *LLMClassifier) Classify(ctx context.Context, sessionID, input string, h
 	req := costguard.CompletionRequest{
 		Model:     c.model,
 		Messages:  messages,
-		MaxTokens: 64, // response is always a small JSON array
+		MaxTokens: 256, // small JSON array; extra headroom for models that think before outputting
 	}
 
 	resp, err := c.client.Complete(ctx, req)
@@ -134,11 +134,18 @@ func (c *LLMClassifier) Classify(ctx context.Context, sessionID, input string, h
 		return []Intent{IntentUnknown}, fmt.Errorf("classify: LLM call failed: %w", err)
 	}
 
-	intents := parseIntents(resp.Content)
+	// Some models return empty content but populate ToolCalls even when no tools
+	// are defined. Fall back to the first tool call's arguments in that case.
+	raw := resp.Content
+	if raw == "" && len(resp.ToolCalls) > 0 {
+		raw = resp.ToolCalls[0].Arguments
+	}
+
+	intents := parseIntents(raw)
 	c.log.InfoContext(ctx, "intent classified",
 		"session_id", sessionID,
 		"intents", intents,
-		"raw", resp.Content,
+		"raw", raw,
 	)
 	return intents, nil
 }
@@ -146,13 +153,10 @@ func (c *LLMClassifier) Classify(ctx context.Context, sessionID, input string, h
 // buildMessages constructs the message slice for the classifier request.
 func buildMessages(history []types.ConversationTurn, input string) []types.ConversationTurn {
 	msgs := make([]types.ConversationTurn, 0, len(history)+2)
+	// Use system role so the instruction works across all model families.
 	msgs = append(msgs, types.ConversationTurn{
-		Role:    "user",
+		Role:    "system",
 		Content: systemPrompt,
-	})
-	msgs = append(msgs, types.ConversationTurn{
-		Role:    "assistant",
-		Content: `Understood. Send me the message to classify and I'll return {"intents":[...]}`,
 	})
 	msgs = append(msgs, history...)
 	msgs = append(msgs, types.ConversationTurn{
@@ -180,6 +184,13 @@ func parseIntents(raw string) []Intent {
 		lines := strings.Split(raw, "\n")
 		if len(lines) >= 3 {
 			raw = strings.Join(lines[1:len(lines)-1], "\n")
+		}
+	}
+
+	// If the model added surrounding prose, extract the first JSON object.
+	if start := strings.Index(raw, "{"); start != -1 {
+		if end := strings.LastIndex(raw, "}"); end > start {
+			raw = raw[start : end+1]
 		}
 	}
 
