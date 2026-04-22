@@ -165,6 +165,7 @@ type Agent struct {
 	loop     *tools.AgenticLoop
 	sessions sessions.SessionStore
 	projects sessions.ProjectStore
+	model    string
 }
 
 // New constructs a Builder Agent.
@@ -173,7 +174,7 @@ type Agent struct {
 //   - store is the session store — used to persist phase metadata across turns.
 //   - cfg is the code tool configuration (sandbox directory, blocked commands, etc.).
 //   - projects is the persistent project store — survives session expiry.
-func New(llm costguard.LLMClient, store sessions.SessionStore, cfg code.Config, projects sessions.ProjectStore) *Agent {
+func New(llm costguard.LLMClient, store sessions.SessionStore, cfg code.Config, projects sessions.ProjectStore, model string) *Agent {
 	reg := tools.NewRegistry()
 	reg.Register(code.NewReadTool(cfg))
 	reg.Register(code.NewWriteTool(cfg))
@@ -190,6 +191,7 @@ func New(llm costguard.LLMClient, store sessions.SessionStore, cfg code.Config, 
 		},
 		sessions: store,
 		projects: projects,
+		model:    model,
 	}
 }
 
@@ -284,7 +286,7 @@ func (a *Agent) Handle(ctx context.Context, req types.AgentRequest) (types.Agent
 	msgs = append(msgs, req.History...)
 
 	raw, err := a.loop.Run(ctx, costguard.CompletionRequest{
-		Model:     "claude-sonnet-4-6",
+		Model:     a.model,
 		Messages:  msgs,
 		MaxTokens: 8192,
 	})

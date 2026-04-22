@@ -144,7 +144,8 @@ func buildSystemPrompt(profile *sessions.UserProfile) string {
 // Agent implements the Comms Agent. It wires email and calendar tools into an
 // agentic loop and handles user requests via the standard Agent interface.
 type Agent struct {
-	loop *tools.AgenticLoop
+	loop  *tools.AgenticLoop
+	model string
 }
 
 // New constructs a Comms Agent.
@@ -162,6 +163,7 @@ func New(
 	store approval.Store,
 	users sessions.UserStore,
 	reminders sessions.ReminderStore,
+	model string,
 ) *Agent {
 	reg := tools.NewRegistry()
 
@@ -192,6 +194,7 @@ func New(
 			Client:   llm,
 			Registry: reg,
 		},
+		model: model,
 	}
 }
 
@@ -213,7 +216,7 @@ func (a *Agent) HandleStream(ctx context.Context, req types.AgentRequest) (<-cha
 	msgs = append(msgs, req.History...)
 
 	return a.loop.RunStream(ctx, costguard.CompletionRequest{
-		Model:     "gemma4:26b",
+		Model:     a.model,
 		Messages:  msgs,
 		MaxTokens: 4096,
 	})
@@ -248,7 +251,7 @@ func (a *Agent) Handle(ctx context.Context, req types.AgentRequest) (types.Agent
 	msgs = append(msgs, req.History...)
 
 	output, err := a.loop.Run(ctx, costguard.CompletionRequest{
-		Model:     "gemma4:26b",
+		Model:     a.model,
 		Messages:  msgs,
 		MaxTokens: 4096,
 	})

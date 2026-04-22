@@ -21,10 +21,10 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/memory"
 	"github.com/marcoantonios1/Agent-OS/internal/router"
+	"github.com/marcoantonios1/Agent-OS/internal/tools"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/calendar"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/code"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/email"
-	"github.com/marcoantonios1/Agent-OS/internal/tools"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/websearch"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
@@ -90,10 +90,10 @@ func (s *scriptedLLM) callCount() int {
 
 // mockEmailProvider is a deterministic, in-memory EmailProvider.
 type mockEmailProvider struct {
-	mu       sync.Mutex
-	inbox    []email.EmailSummary
-	emails   map[string]*email.Email
-	drafts   []*email.Draft
+	mu         sync.Mutex
+	inbox      []email.EmailSummary
+	emails     map[string]*email.Email
+	drafts     []*email.Draft
 	sentEmails []string // to: addresses — should stay empty in draft-only tests
 }
 
@@ -237,7 +237,7 @@ func newStack(cfg stackConfig) *testStack {
 	}
 	store := memory.NewStore()
 	approvals := approval.NewMemoryStore()
-	classifier := router.NewLLMClassifier(agentLLM)
+	classifier := router.NewLLMClassifier(agentLLM, "gemma4:26b")
 
 	sandboxDir := cfg.sandboxDir
 	if sandboxDir == "" {
@@ -260,9 +260,9 @@ func newStack(cfg stackConfig) *testStack {
 	}
 
 	agents := map[router.Intent]router.Agent{
-		router.IntentComms:    comms.New(agentLLM, cfg.emailProv, cfg.calProv, approvals, userStore, memory.NewReminderStore()),
-		router.IntentBuilder:  builder.New(agentLLM, store, code.Config{SandboxDir: sandboxDir}, projectStore),
-		router.IntentResearch: research.New(agentLLM, newWebSearchRegistry(searchProv)),
+		router.IntentComms:    comms.New(agentLLM, cfg.emailProv, cfg.calProv, approvals, userStore, memory.NewReminderStore(), "gemma4:26b"),
+		router.IntentBuilder:  builder.New(agentLLM, store, code.Config{SandboxDir: sandboxDir}, projectStore, "gemma4:26b"),
+		router.IntentResearch: research.New(agentLLM, newWebSearchRegistry(searchProv), "gemma4:26b"),
 	}
 
 	r := router.New(classifier, agents, store, approvals)

@@ -48,19 +48,21 @@ If everything is well-sourced and consistent, write "None.">
 
 // Agent implements the Research Agent using web search tools.
 type Agent struct {
-	loop *tools.AgenticLoop
+	loop  *tools.AgenticLoop
+	model string
 }
 
 // New constructs a Research Agent with the given LLM client and tool registry.
 // The registry should be built with websearch.NewWebSearchRegistry — it provides
 // the web_search and web_fetch tools the agent relies on.
-func New(llm costguard.LLMClient, reg *tools.ToolRegistry) *Agent {
+func New(llm costguard.LLMClient, reg *tools.ToolRegistry, model string) *Agent {
 	return &Agent{
 		loop: &tools.AgenticLoop{
 			Client:   llm,
 			Registry: reg,
 			MaxSteps: 10,
 		},
+		model: model,
 	}
 }
 
@@ -74,7 +76,7 @@ func (a *Agent) HandleStream(ctx context.Context, req types.AgentRequest) (<-cha
 	msgs = append(msgs, types.ConversationTurn{Role: "user", Content: req.Input})
 
 	return a.loop.RunStream(ctx, costguard.CompletionRequest{
-		Model:     "claude-sonnet-4-6",
+		Model:     a.model,
 		Messages:  msgs,
 		MaxTokens: 4096,
 	})
@@ -94,7 +96,7 @@ func (a *Agent) Handle(ctx context.Context, req types.AgentRequest) (types.Agent
 	msgs = append(msgs, types.ConversationTurn{Role: "user", Content: req.Input})
 
 	output, err := a.loop.Run(ctx, costguard.CompletionRequest{
-		Model:     "claude-sonnet-4-6",
+		Model:     a.model,
 		Messages:  msgs,
 		MaxTokens: 4096,
 	})

@@ -10,10 +10,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/marcoantonios1/Agent-OS/internal/app"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/builder"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/comms"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/research"
+	"github.com/marcoantonios1/Agent-OS/internal/app"
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/discord"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
@@ -22,15 +22,15 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/observability"
 	"github.com/marcoantonios1/Agent-OS/internal/router"
 	"github.com/marcoantonios1/Agent-OS/internal/sessions"
+	"github.com/marcoantonios1/Agent-OS/internal/tools"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/calendar"
 	calendarGoogle "github.com/marcoantonios1/Agent-OS/internal/tools/calendar/google"
 	calendarOutlook "github.com/marcoantonios1/Agent-OS/internal/tools/calendar/outlook"
-	"github.com/marcoantonios1/Agent-OS/internal/tools"
-	"github.com/marcoantonios1/Agent-OS/internal/tools/reminder"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/code"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/email"
 	emailGmail "github.com/marcoantonios1/Agent-OS/internal/tools/email/gmail"
 	emailOutlook "github.com/marcoantonios1/Agent-OS/internal/tools/email/outlook"
+	"github.com/marcoantonios1/Agent-OS/internal/tools/reminder"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/websearch"
 	searchBrave "github.com/marcoantonios1/Agent-OS/internal/tools/websearch/brave"
 )
@@ -75,14 +75,14 @@ func main() {
 	approvals := approval.NewMemoryStore()
 
 	llm := costguard.New(cfg.CostguardURL, cfg.CostguardAPIKey)
-	classifier := router.NewLLMClassifier(llm)
+	classifier := router.NewLLMClassifier(llm, cfg.ClassifierModel)
 
 	reminderWorker := reminder.NewWorker(reminderStore)
 
 	agents := map[router.Intent]router.Agent{
-		router.IntentComms:    comms.New(llm, newEmailProvider(ctx, cfg), newCalendarProvider(ctx, cfg), approvals, userStore, reminderStore),
-		router.IntentBuilder:  builder.New(llm, store, newBuilderConfig(cfg), projectStore),
-		router.IntentResearch: research.New(llm, newWebSearchRegistry(cfg)),
+		router.IntentComms:    comms.New(llm, newEmailProvider(ctx, cfg), newCalendarProvider(ctx, cfg), approvals, userStore, reminderStore, cfg.CommsModel),
+		router.IntentBuilder:  builder.New(llm, store, newBuilderConfig(cfg), projectStore, cfg.BuilderModel),
+		router.IntentResearch: research.New(llm, newWebSearchRegistry(cfg), cfg.ResearchModel),
 	}
 
 	r := router.New(classifier, agents, store, approvals)

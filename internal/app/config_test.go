@@ -63,18 +63,18 @@ func TestLoad_MissingCostguardURL_ReturnsError(t *testing.T) {
 }
 
 func TestLoad_ValidConfig_Succeeds(t *testing.T) {
-	setEnv(t, map[string]string{"COSTGUARD_URL": "http://localhost:8080"})
+	setEnv(t, map[string]string{"COSTGUARD_URL": "http://host.docker.internal:8080"})
 	cfg, err := app.Load("nonexistent.env")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.CostguardURL != "http://localhost:8080" {
-		t.Errorf("CostguardURL = %q, want %q", cfg.CostguardURL, "http://localhost:8080")
+	if cfg.CostguardURL != "http://host.docker.internal:8080" {
+		t.Errorf("CostguardURL = %q, want %q", cfg.CostguardURL, "http://host.docker.internal:8080")
 	}
 }
 
 func TestLoad_Defaults(t *testing.T) {
-	setEnv(t, map[string]string{"COSTGUARD_URL": "http://localhost:8080"})
+	setEnv(t, map[string]string{"COSTGUARD_URL": "http://host.docker.internal:8080"})
 	clearEnv(t, "PORT", "LOG_LEVEL", "BUILDER_SANDBOX_DIR", "SESSION_TTL")
 
 	cfg, err := app.Load("nonexistent.env")
@@ -92,6 +92,57 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 	if cfg.SessionTTL != 24*time.Hour {
 		t.Errorf("SessionTTL = %v, want %v", cfg.SessionTTL, 24*time.Hour)
+	}
+}
+
+func TestLoad_ModelDefaults(t *testing.T) {
+	setEnv(t, map[string]string{"COSTGUARD_URL": "http://host.docker.internal:8080"})
+	clearEnv(t, "COMMS_MODEL", "BUILDER_MODEL", "RESEARCH_MODEL", "CLASSIFIER_MODEL")
+
+	cfg, err := app.Load("nonexistent.env")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	const want = "gemma4:26b"
+	if cfg.CommsModel != want {
+		t.Errorf("CommsModel = %q, want %q", cfg.CommsModel, want)
+	}
+	if cfg.BuilderModel != want {
+		t.Errorf("BuilderModel = %q, want %q", cfg.BuilderModel, want)
+	}
+	if cfg.ResearchModel != want {
+		t.Errorf("ResearchModel = %q, want %q", cfg.ResearchModel, want)
+	}
+	if cfg.ClassifierModel != want {
+		t.Errorf("ClassifierModel = %q, want %q", cfg.ClassifierModel, want)
+	}
+}
+
+func TestLoad_ModelEnvOverride(t *testing.T) {
+	setEnv(t, map[string]string{
+		"COSTGUARD_URL":    "http://host.docker.internal:8080",
+		"COMMS_MODEL":      "claude-sonnet-4-6",
+		"BUILDER_MODEL":    "claude-opus-4-7",
+		"RESEARCH_MODEL":   "claude-haiku-4-5-20251001",
+		"CLASSIFIER_MODEL": "claude-sonnet-4-6",
+	})
+
+	cfg, err := app.Load("nonexistent.env")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.CommsModel != "claude-sonnet-4-6" {
+		t.Errorf("CommsModel = %q, want %q", cfg.CommsModel, "claude-sonnet-4-6")
+	}
+	if cfg.BuilderModel != "claude-opus-4-7" {
+		t.Errorf("BuilderModel = %q, want %q", cfg.BuilderModel, "claude-opus-4-7")
+	}
+	if cfg.ResearchModel != "claude-haiku-4-5-20251001" {
+		t.Errorf("ResearchModel = %q, want %q", cfg.ResearchModel, "claude-haiku-4-5-20251001")
+	}
+	if cfg.ClassifierModel != "claude-sonnet-4-6" {
+		t.Errorf("ClassifierModel = %q, want %q", cfg.ClassifierModel, "claude-sonnet-4-6")
 	}
 }
 
@@ -152,7 +203,7 @@ COSTGUARD_API_KEY='my-key'
 }
 
 func TestLoad_MissingDotEnvFile_NoError(t *testing.T) {
-	setEnv(t, map[string]string{"COSTGUARD_URL": "http://localhost:8080"})
+	setEnv(t, map[string]string{"COSTGUARD_URL": "http://host.docker.internal:8080"})
 	_, err := app.Load("this-file-does-not-exist.env")
 	if err != nil {
 		t.Errorf("missing .env file should not be an error, got: %v", err)
@@ -161,7 +212,7 @@ func TestLoad_MissingDotEnvFile_NoError(t *testing.T) {
 
 func TestLoad_SessionTTL_Parsed(t *testing.T) {
 	setEnv(t, map[string]string{
-		"COSTGUARD_URL": "http://localhost:8080",
+		"COSTGUARD_URL": "http://host.docker.internal:8080",
 		"SESSION_TTL":   "2h30m",
 	})
 	cfg, err := app.Load("nonexistent.env")
