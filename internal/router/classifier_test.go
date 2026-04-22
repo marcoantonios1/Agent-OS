@@ -29,7 +29,7 @@ func newClassifier(content string, err error) *LLMClassifier {
 	return NewLLMClassifier(&mockLLMClient{
 		response: costguard.CompletionResponse{Content: content},
 		err:      err,
-	})
+	}, "gemma4:26b")
 }
 
 // firstIntent is a helper to unwrap the first element from Classify's []Intent.

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -172,8 +173,14 @@ func (c *Client) Complete(ctx context.Context, req CompletionRequest) (Completio
 		return CompletionResponse{}, fmt.Errorf("costguard: unexpected status %d", resp.StatusCode)
 	}
 
+	rawBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return CompletionResponse{}, fmt.Errorf("costguard: read response body: %w", err)
+	}
+	c.log.DebugContext(ctx, "costguard raw response", "body", string(rawBody))
+
 	var apiResp oaiResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+	if err := json.Unmarshal(rawBody, &apiResp); err != nil {
 		return CompletionResponse{}, fmt.Errorf("costguard: decode response: %w", err)
 	}
 	if len(apiResp.Choices) == 0 {

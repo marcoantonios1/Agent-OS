@@ -73,7 +73,7 @@ func newRequest(sessionID, input string) types.AgentRequest {
 
 func newAgent(llm *seqLLM, provider websearch.SearchProvider) *research.Agent {
 	reg := websearch.NewWebSearchRegistry(provider)
-	return research.New(llm, reg)
+	return research.New(llm, reg, "gemma4:26b")
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -226,7 +226,7 @@ func TestResearch_ConversationHistory(t *testing.T) {
 	}}
 
 	reg := websearch.NewWebSearchRegistry(&mockSearchProvider{})
-	agent := research.New(llm, reg)
+	agent := research.New(llm, reg, "gemma4:26b")
 
 	req := types.AgentRequest{
 		SessionID: "sess-6",

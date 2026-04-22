@@ -46,6 +46,10 @@ type Config struct {
 	// CostguardAPIKey is the optional bearer token for the Costguard gateway.
 	// Env: COSTGUARD_API_KEY
 	CostguardAPIKey string
+	CommsModel      string
+	BuilderModel    string
+	ResearchModel   string
+	ClassifierModel string
 
 	// ── Google (Gmail + Calendar) ─────────────────────────────────────────────
 
@@ -126,6 +130,10 @@ func Load(envFile string) (*Config, error) {
 
 		CostguardURL:    os.Getenv("COSTGUARD_URL"),
 		CostguardAPIKey: os.Getenv("COSTGUARD_API_KEY"),
+		CommsModel:      envOr("COMMS_MODEL", "gemma4:26b"),
+		BuilderModel:    envOr("BUILDER_MODEL", "gemma4:26b"),
+		ResearchModel:   envOr("RESEARCH_MODEL", "gemma4:26b"),
+		ClassifierModel: envOr("CLASSIFIER_MODEL", "gemma4:26b"),
 
 		GoogleClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
 		GoogleClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),

@@ -37,7 +37,6 @@ type IntentClassifier interface {
 	Classify(ctx context.Context, sessionID, input string, history []types.ConversationTurn) ([]Intent, error)
 }
 
-const classifierModel = "claude-sonnet-4-6"
 
 const systemPrompt = `You are an intent classifier for a multi-agent AI system.
 Your job is to read the user's latest message (and optionally the conversation
@@ -104,13 +103,15 @@ Example responses:
 // LLM-based classification.
 type LLMClassifier struct {
 	client costguard.LLMClient
+	model  string
 	log    *slog.Logger
 }
 
-// NewLLMClassifier returns an LLMClassifier using the provided LLMClient.
-func NewLLMClassifier(client costguard.LLMClient) *LLMClassifier {
+// NewLLMClassifier returns an LLMClassifier using the provided LLMClient and model.
+func NewLLMClassifier(client costguard.LLMClient, model string) *LLMClassifier {
 	return &LLMClassifier{
 		client: client,
+		model:  model,
 		log:    slog.Default(),
 	}
 }
@@ -121,7 +122,7 @@ func (c *LLMClassifier) Classify(ctx context.Context, sessionID, input string, h
 	messages := buildMessages(history, input)
 
 	req := costguard.CompletionRequest{
-		Model:     classifierModel,
+		Model:     c.model,
 		Messages:  messages,
 		MaxTokens: 64, // response is always a small JSON array
 	}
