@@ -139,6 +139,13 @@ func (h *Handler) onMessage(evt *events.Message) {
 	}
 
 	senderJID := normaliseJID(evt.Info.Sender)
+	// WhatsApp now delivers messages with LID (@lid) JIDs instead of phone JIDs.
+	// Resolve to the canonical phone JID before checking the allowlist.
+	if evt.Info.Sender.Server == watypes.HiddenUserServer {
+		if pn, err := h.client.Store.GetAltJID(context.Background(), evt.Info.Sender.ToNonAD()); err == nil && !pn.IsEmpty() {
+			senderJID = pn.String()
+		}
+	}
 	if senderJID != h.allowedJID {
 		h.log.Info("whatsapp: ignored message from non-whitelisted sender", "jid", senderJID)
 		return
