@@ -27,6 +27,11 @@ import (
 // Config holds all runtime configuration for Agent OS. Every field maps 1-to-1
 // with an environment variable documented in README.md.
 type Config struct {
+	// EnvFile is the path to the .env file that was loaded on startup.
+	// Stored here so OAuth providers can write rotated refresh tokens back to
+	// the same file, surviving restarts without manual re-authentication.
+	EnvFile string
+
 	// ── Server ────────────────────────────────────────────────────────────────
 
 	// Port is the TCP port the HTTP server listens on.
@@ -138,6 +143,7 @@ func Load(envFile string) (*Config, error) {
 	}
 
 	cfg := &Config{
+		EnvFile:  envFile,
 		Port:     envOr("PORT", "9091"),
 		LogLevel: envOr("LOG_LEVEL", "info"),
 

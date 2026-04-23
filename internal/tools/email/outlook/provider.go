@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/oauth2"
 
+	agentOAuth "github.com/marcoantonios1/Agent-OS/internal/oauth"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/email"
 )
 
@@ -48,12 +49,13 @@ func NewFromEnv(ctx context.Context) (*Provider, error) {
 	if clientID == "" || refreshToken == "" {
 		return nil, fmt.Errorf("outlook: MICROSOFT_CLIENT_ID and MICROSOFT_REFRESH_TOKEN must be set")
 	}
-	return New(ctx, clientID, "", refreshToken)
+	return New(ctx, clientID, "", refreshToken, nil)
 }
 
 // New creates a Provider from explicit credentials.
 // clientSecret may be empty for public client (device code flow) apps.
-func New(ctx context.Context, clientID, clientSecret, refreshToken string) (*Provider, error) {
+// persist, if non-nil, is called whenever the OAuth server issues a new refresh token.
+func New(ctx context.Context, clientID, clientSecret, refreshToken string, persist func(string)) (*Provider, error) {
 	cfg := &oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
@@ -63,9 +65,9 @@ func New(ctx context.Context, clientID, clientSecret, refreshToken string) (*Pro
 	token := &oauth2.Token{
 		RefreshToken: refreshToken,
 		TokenType:    "Bearer",
-		// Zero expiry forces the token source to refresh immediately.
 	}
-	return &Provider{client: cfg.Client(ctx, token)}, nil
+	ts := agentOAuth.NewPersistingTokenSource(cfg.TokenSource(ctx, token), refreshToken, persist)
+	return &Provider{client: oauth2.NewClient(ctx, ts)}, nil
 }
 
 // List returns up to limit recent emails from the inbox.
