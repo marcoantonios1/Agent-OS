@@ -25,7 +25,7 @@ func TestContextInjection_CommsAgentAddressesUserByName(t *testing.T) {
 		},
 	})
 
-	var systemPrompt string
+	var capturedPrompts []string
 	capLLM := &capturingScriptedLLM{
 		responses: []costguard.CompletionResponse{
 			classifyResp("comms"),
@@ -33,8 +33,8 @@ func TestContextInjection_CommsAgentAddressesUserByName(t *testing.T) {
 		},
 		onCall: func(req costguard.CompletionRequest) {
 			for _, msg := range req.Messages {
-				if msg.Role == "system" && systemPrompt == "" {
-					systemPrompt = msg.Content
+				if msg.Role == "system" {
+					capturedPrompts = append(capturedPrompts, msg.Content)
 				}
 			}
 		},
@@ -59,19 +59,28 @@ func TestContextInjection_CommsAgentAddressesUserByName(t *testing.T) {
 		t.Error("expected non-empty response")
 	}
 
-	if systemPrompt == "" {
-		t.Fatal("no system prompt was captured")
+	// The classifier now uses a system role too, so multiple system prompts are
+	// captured. Find the comms agent one (it contains "Comms Agent").
+	var commsPrompt string
+	for _, p := range capturedPrompts {
+		if strings.Contains(p, "Comms Agent") {
+			commsPrompt = p
+			break
+		}
 	}
-	if !strings.Contains(systemPrompt, "Marco") {
-		t.Errorf("system prompt should contain the user's name 'Marco', got:\n%s", systemPrompt[:min(len(systemPrompt), 500)])
+	if commsPrompt == "" {
+		t.Fatalf("no comms system prompt captured; got %d system messages", len(capturedPrompts))
 	}
-	if !strings.Contains(systemPrompt, "concise") {
+	if !strings.Contains(commsPrompt, "Marco") {
+		t.Errorf("system prompt should contain the user's name 'Marco', got:\n%s", commsPrompt[:min(len(commsPrompt), 500)])
+	}
+	if !strings.Contains(commsPrompt, "concise") {
 		t.Errorf("system prompt should contain communication style 'concise'")
 	}
-	if !strings.Contains(systemPrompt, "alice@example.com") {
+	if !strings.Contains(commsPrompt, "alice@example.com") {
 		t.Errorf("system prompt should contain recurring contact email")
 	}
-	if !strings.Contains(systemPrompt, "sign_off") {
+	if !strings.Contains(commsPrompt, "sign_off") {
 		t.Errorf("system prompt should contain preferences")
 	}
 }

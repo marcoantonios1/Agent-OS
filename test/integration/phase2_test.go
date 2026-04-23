@@ -228,7 +228,7 @@ func TestPhase2_Memory_ProfilePersistedAcrossSessions(t *testing.T) {
 	}
 
 	// Capture the system prompt sent to the agent in the NEW session.
-	var capturedSystemPrompt string
+	var capturedPrompts []string
 	capLLM := &capturingScriptedLLM{
 		responses: []costguard.CompletionResponse{
 			classifyResp("comms"),
@@ -236,8 +236,8 @@ func TestPhase2_Memory_ProfilePersistedAcrossSessions(t *testing.T) {
 		},
 		onCall: func(req costguard.CompletionRequest) {
 			for _, msg := range req.Messages {
-				if msg.Role == "system" && capturedSystemPrompt == "" {
-					capturedSystemPrompt = msg.Content
+				if msg.Role == "system" {
+					capturedPrompts = append(capturedPrompts, msg.Content)
 				}
 			}
 		},
@@ -267,21 +267,29 @@ func TestPhase2_Memory_ProfilePersistedAcrossSessions(t *testing.T) {
 		t.Error("expected non-empty response")
 	}
 
-	if capturedSystemPrompt == "" {
-		t.Fatal("no system prompt captured — check capturingScriptedLLM wiring")
+	// The classifier now uses system role too, so find the comms agent prompt.
+	var commsPrompt string
+	for _, p := range capturedPrompts {
+		if strings.Contains(p, "Comms Agent") {
+			commsPrompt = p
+			break
+		}
+	}
+	if commsPrompt == "" {
+		t.Fatalf("no comms system prompt captured; got %d system messages", len(capturedPrompts))
 	}
 
 	// The system prompt must contain the profile data from the previous session.
-	if !strings.Contains(capturedSystemPrompt, "Marco") {
-		t.Errorf("system prompt must contain user name 'Marco'; got:\n%.500s", capturedSystemPrompt)
+	if !strings.Contains(commsPrompt, "Marco") {
+		t.Errorf("system prompt must contain user name 'Marco'; got:\n%.500s", commsPrompt)
 	}
-	if !strings.Contains(capturedSystemPrompt, "formal") {
+	if !strings.Contains(commsPrompt, "formal") {
 		t.Errorf("system prompt must contain communication style 'formal'")
 	}
-	if !strings.Contains(capturedSystemPrompt, "UTC+3") {
+	if !strings.Contains(commsPrompt, "UTC+3") {
 		t.Errorf("system prompt must contain timezone preference 'UTC+3'")
 	}
-	if !strings.Contains(capturedSystemPrompt, "alice@example.com") {
+	if !strings.Contains(commsPrompt, "alice@example.com") {
 		t.Errorf("system prompt must contain recurring contact email")
 	}
 }
