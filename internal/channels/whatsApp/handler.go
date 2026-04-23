@@ -49,7 +49,7 @@ func New(dispatcher web.Dispatcher, storePath, allowedJID string) (*Handler, err
 	}
 
 	ctx := context.Background()
-	container, err := sqlstore.New(ctx, "sqlite", "file:"+storePath+"?_foreign_keys=on", waLog.Noop)
+	container, err := sqlstore.New(ctx, "sqlite", "file:"+storePath+"?_pragma=foreign_keys(ON)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", waLog.Noop)
 	if err != nil {
 		return nil, fmt.Errorf("whatsapp: open session store %q: %w", storePath, err)
 	}
