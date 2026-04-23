@@ -17,6 +17,7 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/discord"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
+	"github.com/marcoantonios1/Agent-OS/internal/channels/whatsApp"
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/memory"
 	"github.com/marcoantonios1/Agent-OS/internal/observability"
@@ -117,12 +118,32 @@ func main() {
 		slog.Warn("DISCORD_BOT_TOKEN not set — Discord channel disabled")
 	}
 
+	// Start WhatsApp channel if configured.
+	var whatsAppHandler *whatsapp.Handler
+	if cfg.WhatsAppConfigured() {
+		whatsAppHandler, err = whatsapp.New(r, cfg.WhatsAppStorePath, cfg.WhatsAppAllowedJID)
+		if err != nil {
+			slog.Error("whatsapp: setup failed", "error", err)
+			os.Exit(1)
+		}
+		go func() {
+			if err := whatsAppHandler.Start(ctx); err != nil {
+				slog.Error("whatsapp channel error", "error", err)
+			}
+		}()
+	} else {
+		slog.Warn("WHATSAPP_STORE_PATH not set — WhatsApp channel disabled")
+	}
+
 	// Block until SIGINT or SIGTERM.
 	<-ctx.Done()
 	stop()
 
 	if discordHandler != nil {
 		discordHandler.Stop()
+	}
+	if whatsAppHandler != nil {
+		whatsAppHandler.Stop()
 	}
 
 	slog.Info("shutting down — draining in-flight requests")
