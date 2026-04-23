@@ -1,6 +1,6 @@
 // calendartest is a manual test harness for the calendar tools.
-// When OUTLOOK_CAL_CLIENT_ID and OUTLOOK_CAL_REFRESH_TOKEN are set it uses
-// your real Outlook Calendar. When GOOGLE_CAL_* vars are set it uses Gmail
+// When MICROSOFT_CLIENT_ID and MICROSOFT_REFRESH_TOKEN are set it uses
+// your real Outlook Calendar. When GOOGLE_CLIENT_ID is set it uses Google
 // Calendar. Otherwise it falls back to a realistic stub.
 //
 // Usage:
@@ -168,7 +168,7 @@ func main() {
 	mode := "stub"
 
 	switch {
-	case os.Getenv("OUTLOOK_CAL_CLIENT_ID") != "" && os.Getenv("OUTLOOK_CAL_REFRESH_TOKEN") != "":
+	case os.Getenv("MICROSOFT_CLIENT_ID") != "" && os.Getenv("MICROSOFT_REFRESH_TOKEN") != "":
 		op, err := outlookcal.NewFromEnv(ctx)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Outlook Calendar setup failed: %v\nFalling back to stub provider.\n\n", err)
@@ -176,7 +176,7 @@ func main() {
 			p = op
 			mode = "Outlook Calendar (live)"
 		}
-	case os.Getenv("GOOGLE_CAL_CLIENT_ID") != "":
+	case os.Getenv("GOOGLE_CLIENT_ID") != "":
 		gp, err := googlecal.NewFromEnv(ctx)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Google Calendar setup failed: %v\nFalling back to stub provider.\n\n", err)

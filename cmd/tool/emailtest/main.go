@@ -1,5 +1,5 @@
 // emailtest is a manual test harness for the email tools.
-// When GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, and GMAIL_REFRESH_TOKEN are set
+// When GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REFRESH_TOKEN are set
 // it runs against your real Gmail account. Otherwise it falls back to a
 // realistic stub so you can exercise the tools without OAuth credentials.
 //
@@ -184,7 +184,7 @@ func main() {
 	mode := "stub"
 
 	switch {
-	case os.Getenv("OUTLOOK_CLIENT_ID") != "" && os.Getenv("OUTLOOK_REFRESH_TOKEN") != "":
+	case os.Getenv("MICROSOFT_CLIENT_ID") != "" && os.Getenv("MICROSOFT_REFRESH_TOKEN") != "":
 		op, err := outlook.NewFromEnv(ctx)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Outlook setup failed: %v\nFalling back to stub provider.\n\n", err)
@@ -192,7 +192,7 @@ func main() {
 			p = op
 			mode = "Outlook (live) — marco_antonios1@outlook.com"
 		}
-	case os.Getenv("GMAIL_CLIENT_ID") != "":
+	case os.Getenv("GOOGLE_CLIENT_ID") != "":
 		gp, err := gmail.NewFromEnv(ctx)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Gmail setup failed: %v\nFalling back to stub provider.\n\n", err)
