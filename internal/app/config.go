@@ -107,6 +107,19 @@ type Config struct {
 	// Env: SESSION_TTL (default: 24h). Accepts any value parseable by time.ParseDuration.
 	SessionTTL time.Duration
 
+	// ── WhatsApp channel ─────────────────────────────────────────────────────
+
+	// WhatsAppStorePath is the path to the SQLite DB that stores the WhatsApp
+	// device pairing session. Setting this enables the WhatsApp channel.
+	// Env: WHATSAPP_STORE_PATH (default: "" — WhatsApp disabled)
+	WhatsAppStorePath string
+
+	// WhatsAppAllowedJID is the only WhatsApp JID that Agent OS will respond to.
+	// Required when WHATSAPP_STORE_PATH is set; the server refuses to start if
+	// this is empty and WHATSAPP_STORE_PATH is configured.
+	// Env: WHATSAPP_ALLOWED_JID (e.g. "96170123456@s.whatsapp.net")
+	WhatsAppAllowedJID string
+
 	// ── Persistence ───────────────────────────────────────────────────────────
 
 	// SQLitePath is the file path for the SQLite database used to persist user
@@ -152,6 +165,9 @@ func Load(envFile string) (*Config, error) {
 		BuilderSandboxDir: envOr("BUILDER_SANDBOX_DIR", "workspace"),
 		SessionTTL:        envDuration("SESSION_TTL", 24*time.Hour),
 
+		WhatsAppStorePath:  os.Getenv("WHATSAPP_STORE_PATH"),
+		WhatsAppAllowedJID: os.Getenv("WHATSAPP_ALLOWED_JID"),
+
 		SQLitePath: os.Getenv("SQLITE_PATH"),
 	}
 
@@ -166,6 +182,9 @@ func (c *Config) validate() error {
 	var missing []string
 	if c.CostguardURL == "" {
 		missing = append(missing, "COSTGUARD_URL is required — set it to your Costguard gateway base URL (e.g. http://localhost:8080)")
+	}
+	if c.WhatsAppStorePath != "" && c.WhatsAppAllowedJID == "" {
+		missing = append(missing, "WHATSAPP_ALLOWED_JID is required when WhatsApp is enabled — set it to your personal number's JID (e.g. 96170123456@s.whatsapp.net)")
 	}
 	if len(missing) > 0 {
 		return errors.New("config: " + strings.Join(missing, "; "))
@@ -182,6 +201,11 @@ func (c *Config) SQLiteConfigured() bool {
 // DiscordConfigured reports whether a Discord bot token is present.
 func (c *Config) DiscordConfigured() bool {
 	return c.DiscordBotToken != ""
+}
+
+// WhatsAppConfigured reports whether a WhatsApp store path is set.
+func (c *Config) WhatsAppConfigured() bool {
+	return c.WhatsAppStorePath != ""
 }
 
 // SearchConfigured reports whether a search API key is present.
