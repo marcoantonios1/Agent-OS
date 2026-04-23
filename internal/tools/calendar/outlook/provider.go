@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/oauth2"
 
+	agentOAuth "github.com/marcoantonios1/Agent-OS/internal/oauth"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/calendar"
 )
 
@@ -47,18 +48,20 @@ func NewFromEnv(ctx context.Context) (*Provider, error) {
 	if clientID == "" || refreshToken == "" {
 		return nil, fmt.Errorf("outlook calendar: MICROSOFT_CLIENT_ID and MICROSOFT_REFRESH_TOKEN must be set")
 	}
-	return New(ctx, clientID, refreshToken)
+	return New(ctx, clientID, refreshToken, nil)
 }
 
 // New creates a Provider from explicit credentials.
-func New(ctx context.Context, clientID, refreshToken string) (*Provider, error) {
+// persist, if non-nil, is called whenever the OAuth server issues a new refresh token.
+func New(ctx context.Context, clientID, refreshToken string, persist func(string)) (*Provider, error) {
 	cfg := &oauth2.Config{
 		ClientID: clientID,
 		Scopes:   calendarScopes,
 		Endpoint: microsoftEndpoint,
 	}
 	token := &oauth2.Token{RefreshToken: refreshToken, TokenType: "Bearer"}
-	return &Provider{client: cfg.Client(ctx, token)}, nil
+	ts := agentOAuth.NewPersistingTokenSource(cfg.TokenSource(ctx, token), refreshToken, persist)
+	return &Provider{client: oauth2.NewClient(ctx, ts)}, nil
 }
 
 // List returns all events in the [from, to) range.

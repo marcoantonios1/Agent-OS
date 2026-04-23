@@ -16,6 +16,7 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
+	agentOAuth "github.com/marcoantonios1/Agent-OS/internal/oauth"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/email"
 )
 
@@ -39,11 +40,13 @@ func NewFromEnv(ctx context.Context) (*Provider, error) {
 	if clientID == "" || clientSecret == "" || refreshToken == "" {
 		return nil, fmt.Errorf("gmail: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REFRESH_TOKEN must all be set")
 	}
-	return New(ctx, clientID, clientSecret, refreshToken)
+	return New(ctx, clientID, clientSecret, refreshToken, nil)
 }
 
 // New creates a Provider from explicit credentials.
-func New(ctx context.Context, clientID, clientSecret, refreshToken string) (*Provider, error) {
+// persist, if non-nil, is called whenever the OAuth server issues a new refresh
+// token so the caller can write it back to durable storage.
+func New(ctx context.Context, clientID, clientSecret, refreshToken string, persist func(string)) (*Provider, error) {
 	cfg := &oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
@@ -59,9 +62,9 @@ func New(ctx context.Context, clientID, clientSecret, refreshToken string) (*Pro
 		TokenType:    "Bearer",
 	}
 
-	httpClient := cfg.Client(ctx, token)
+	ts := agentOAuth.NewPersistingTokenSource(cfg.TokenSource(ctx, token), refreshToken, persist)
 	svc, err := googlemail.NewService(ctx,
-		option.WithHTTPClient(httpClient),
+		option.WithHTTPClient(oauth2.NewClient(ctx, ts)),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("gmail: create service: %w", err)

@@ -20,6 +20,7 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/channels/whatsApp"
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/memory"
+	agentOAuth "github.com/marcoantonios1/Agent-OS/internal/oauth"
 	"github.com/marcoantonios1/Agent-OS/internal/observability"
 	"github.com/marcoantonios1/Agent-OS/internal/router"
 	"github.com/marcoantonios1/Agent-OS/internal/sessions"
@@ -181,7 +182,8 @@ func (s *stubSearchProvider) Search(_ context.Context, _ string, _ int) ([]webse
 // credentials are present in cfg, or nil if neither is configured.
 func newEmailProvider(ctx context.Context, cfg *app.Config) email.EmailProvider {
 	if cfg.GoogleConfigured() {
-		p, err := emailGmail.New(ctx, cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleRefreshToken)
+		persist := agentOAuth.EnvFilePersist(cfg.EnvFile, "GOOGLE_REFRESH_TOKEN")
+		p, err := emailGmail.New(ctx, cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleRefreshToken, persist)
 		if err != nil {
 			slog.Warn("Gmail provider unavailable", "error", err)
 			return nil
@@ -189,7 +191,8 @@ func newEmailProvider(ctx context.Context, cfg *app.Config) email.EmailProvider 
 		return p
 	}
 	if cfg.MicrosoftConfigured() {
-		p, err := emailOutlook.New(ctx, cfg.MicrosoftClientID, "", cfg.MicrosoftRefreshToken)
+		persist := agentOAuth.EnvFilePersist(cfg.EnvFile, "MICROSOFT_REFRESH_TOKEN")
+		p, err := emailOutlook.New(ctx, cfg.MicrosoftClientID, "", cfg.MicrosoftRefreshToken, persist)
 		if err != nil {
 			slog.Warn("Outlook email provider unavailable", "error", err)
 			return nil
@@ -204,7 +207,8 @@ func newEmailProvider(ctx context.Context, cfg *app.Config) email.EmailProvider 
 // which credentials are present in cfg, or nil if neither is configured.
 func newCalendarProvider(ctx context.Context, cfg *app.Config) calendar.CalendarProvider {
 	if cfg.GoogleConfigured() {
-		p, err := calendarGoogle.New(ctx, cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleRefreshToken)
+		persist := agentOAuth.EnvFilePersist(cfg.EnvFile, "GOOGLE_REFRESH_TOKEN")
+		p, err := calendarGoogle.New(ctx, cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleRefreshToken, persist)
 		if err != nil {
 			slog.Warn("Google Calendar provider unavailable", "error", err)
 			return nil
@@ -212,7 +216,8 @@ func newCalendarProvider(ctx context.Context, cfg *app.Config) calendar.Calendar
 		return p
 	}
 	if cfg.MicrosoftConfigured() {
-		p, err := calendarOutlook.New(ctx, cfg.MicrosoftClientID, cfg.MicrosoftRefreshToken)
+		persist := agentOAuth.EnvFilePersist(cfg.EnvFile, "MICROSOFT_REFRESH_TOKEN")
+		p, err := calendarOutlook.New(ctx, cfg.MicrosoftClientID, cfg.MicrosoftRefreshToken, persist)
 		if err != nil {
 			slog.Warn("Outlook Calendar provider unavailable", "error", err)
 			return nil
