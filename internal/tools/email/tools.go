@@ -69,6 +69,9 @@ func (t *ListTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 	if err != nil {
 		return "", fmt.Errorf("email_list: %w", err)
 	}
+	if len(summaries) == 0 {
+		return "No emails found.", nil
+	}
 	out, _ := json.Marshal(summaries)
 	return string(out), nil
 }

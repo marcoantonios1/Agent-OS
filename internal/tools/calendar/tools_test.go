@@ -191,8 +191,8 @@ func TestListTool_EmptyRange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if items := decodeSlice(t, result); len(items) != 0 {
-		t.Errorf("got %d events, want 0", len(items))
+	if result != "No events found in the requested date range." {
+		t.Errorf("got %q, want no-events message", result)
 	}
 }
 

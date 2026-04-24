@@ -91,6 +91,9 @@ func (t *ListTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 	if err != nil {
 		return "", fmt.Errorf("calendar_list: %w", err)
 	}
+	if len(events) == 0 {
+		return "No events found in the requested date range.", nil
+	}
 	out, _ := json.Marshal(events)
 	return string(out), nil
 }

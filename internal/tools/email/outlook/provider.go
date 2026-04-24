@@ -73,7 +73,7 @@ func New(ctx context.Context, clientID, clientSecret, refreshToken string, persi
 // List returns up to limit recent emails from the inbox.
 func (p *Provider) List(ctx context.Context, limit int) ([]email.EmailSummary, error) {
 	endpoint := fmt.Sprintf(
-		"%s/messages?$top=%d&$select=id,subject,from,receivedDateTime,bodyPreview&$orderby=receivedDateTime desc",
+		"%s/mailFolders/Inbox/messages?$top=%d&$select=id,subject,from,receivedDateTime,bodyPreview&$orderby=receivedDateTime desc",
 		graphBase, limit,
 	)
 	var resp struct {
