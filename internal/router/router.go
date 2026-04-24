@@ -329,6 +329,7 @@ func (r *Router) RouteStream(ctx context.Context, msg types.InboundMessage) (<-c
 
 	ctx = approval.WithSessionID(ctx, msg.SessionID)
 	ctx = sessions.WithUserID(ctx, msg.UserID)
+	ctx = sessions.WithChannelID(ctx, msg.ChannelID)
 
 	var rawCh <-chan string
 	valid := validIntents(intents)

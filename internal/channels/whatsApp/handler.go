@@ -200,7 +200,7 @@ func (h *Handler) routeAndRespond(
 	out, err := h.dispatcher.Route(ctx, inbound)
 	if err != nil {
 		h.log.ErrorContext(ctx, "whatsapp: route error", "session_id", sid, "error", err)
-		h.send(ctx, chat, "Sorry, something went wrong. Please try again.")
+		h.send(ctx, chat, "Sorry, something went wrong. Please try again.") //nolint:errcheck
 		return
 	}
 
@@ -209,7 +209,7 @@ func (h *Handler) routeAndRespond(
 		"latency_ms", time.Since(start).Milliseconds(),
 		"channel", "whatsapp",
 	)
-	h.send(ctx, chat, out.Text)
+	h.send(ctx, chat, out.Text) //nolint:errcheck
 }
 
 // respondStreaming collects all chunks from the channel and sends a single
@@ -240,13 +240,15 @@ func (h *Handler) respondStreaming(
 }
 
 // send delivers a text message to the given WhatsApp JID.
-func (h *Handler) send(ctx context.Context, to watypes.JID, text string) {
+func (h *Handler) send(ctx context.Context, to watypes.JID, text string) error {
 	_, err := h.client.SendMessage(ctx, to, &waE2E.Message{
 		Conversation: strPtr(text),
 	})
 	if err != nil {
 		h.log.ErrorContext(ctx, "whatsapp: send error", "to", to, "error", err)
+		return fmt.Errorf("whatsapp: send to %s: %w", to, err)
 	}
+	return nil
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
