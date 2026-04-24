@@ -3,6 +3,7 @@ package calendar
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
 	"time"
@@ -45,10 +46,13 @@ func (m *MultiProvider) List(ctx context.Context, from, to time.Time) ([]Event, 
 
 	seen := make(map[string]struct{})
 	var merged []Event
+	successCount := 0
 	for _, r := range results {
 		if r.err != nil {
-			continue // partial failure: include successful providers' results
+			slog.Warn("calendar provider error", "error", r.err)
+			continue
 		}
+		successCount++
 		for _, e := range r.events {
 			if _, dup := seen[e.ID]; dup {
 				continue
@@ -56,6 +60,9 @@ func (m *MultiProvider) List(ctx context.Context, from, to time.Time) ([]Event, 
 			seen[e.ID] = struct{}{}
 			merged = append(merged, e)
 		}
+	}
+	if successCount == 0 {
+		return nil, fmt.Errorf("all calendar providers failed")
 	}
 	sort.Slice(merged, func(i, j int) bool {
 		return merged[i].Start.Before(merged[j].Start)

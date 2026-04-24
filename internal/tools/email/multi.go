@@ -3,6 +3,7 @@ package email
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
 )
@@ -98,6 +99,7 @@ func fanOutList(ctx context.Context, providers []EmailProvider, fetch func(Email
 	)
 	for _, r := range results {
 		if r.err != nil {
+			slog.Warn("email provider error", "error", r.err)
 			errs = append(errs, r.err)
 		} else {
 			allItems = append(allItems, r.items)
