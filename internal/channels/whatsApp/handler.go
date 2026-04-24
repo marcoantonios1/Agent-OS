@@ -236,7 +236,7 @@ func (h *Handler) respondStreaming(
 		"latency_ms", time.Since(start).Milliseconds(),
 		"channel", "whatsapp-stream",
 	)
-	h.send(ctx, chat, text)
+	h.send(ctx, chat, text) //nolint:errcheck
 }
 
 // send delivers a text message to the given WhatsApp JID.
