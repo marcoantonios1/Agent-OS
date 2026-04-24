@@ -184,54 +184,84 @@ func (s *stubSearchProvider) Search(_ context.Context, _ string, _ int) ([]webse
 	return []websearch.SearchResult{}, nil
 }
 
-// newEmailProvider returns a Gmail or Outlook EmailProvider based on which
-// credentials are present in cfg, or nil if neither is configured.
+// newEmailProvider returns an EmailProvider for all configured backends.
+// If both Google and Microsoft are configured a MultiProvider is returned with
+// Google as the primary (writes go to Gmail). If only one is configured that
+// provider is returned directly. Returns nil if neither is configured.
 func newEmailProvider(ctx context.Context, cfg *app.Config) email.EmailProvider {
+	var google, microsoft email.EmailProvider
+
 	if cfg.GoogleConfigured() {
 		persist := agentOAuth.EnvFilePersist(cfg.EnvFile, "GOOGLE_REFRESH_TOKEN")
 		p, err := emailGmail.New(ctx, cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleRefreshToken, persist)
 		if err != nil {
 			slog.Warn("Gmail provider unavailable", "error", err)
-			return nil
+		} else {
+			google = p
 		}
-		return p
 	}
 	if cfg.MicrosoftConfigured() {
 		persist := agentOAuth.EnvFilePersist(cfg.EnvFile, "MICROSOFT_REFRESH_TOKEN")
 		p, err := emailOutlook.New(ctx, cfg.MicrosoftClientID, "", cfg.MicrosoftRefreshToken, persist)
 		if err != nil {
 			slog.Warn("Outlook email provider unavailable", "error", err)
-			return nil
+		} else {
+			microsoft = p
 		}
-		return p
 	}
-	slog.Warn("No email provider configured — email tools disabled")
-	return nil
+
+	switch {
+	case google != nil && microsoft != nil:
+		slog.Info("email: using both Gmail and Outlook (Google primary)")
+		return email.NewMultiProvider(google, google, microsoft)
+	case google != nil:
+		return google
+	case microsoft != nil:
+		return microsoft
+	default:
+		slog.Warn("No email provider configured — email tools disabled")
+		return nil
+	}
 }
 
-// newCalendarProvider returns a Google or Outlook CalendarProvider based on
-// which credentials are present in cfg, or nil if neither is configured.
+// newCalendarProvider returns a CalendarProvider for all configured backends.
+// If both Google and Microsoft are configured a MultiProvider is returned with
+// Google as the primary (writes go to Google Calendar). If only one is
+// configured that provider is returned directly. Returns nil if neither is configured.
 func newCalendarProvider(ctx context.Context, cfg *app.Config) calendar.CalendarProvider {
+	var google, microsoft calendar.CalendarProvider
+
 	if cfg.GoogleConfigured() {
 		persist := agentOAuth.EnvFilePersist(cfg.EnvFile, "GOOGLE_REFRESH_TOKEN")
 		p, err := calendarGoogle.New(ctx, cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.GoogleRefreshToken, persist)
 		if err != nil {
 			slog.Warn("Google Calendar provider unavailable", "error", err)
-			return nil
+		} else {
+			google = p
 		}
-		return p
 	}
 	if cfg.MicrosoftConfigured() {
 		persist := agentOAuth.EnvFilePersist(cfg.EnvFile, "MICROSOFT_REFRESH_TOKEN")
 		p, err := calendarOutlook.New(ctx, cfg.MicrosoftClientID, cfg.MicrosoftRefreshToken, persist)
 		if err != nil {
 			slog.Warn("Outlook Calendar provider unavailable", "error", err)
-			return nil
+		} else {
+			microsoft = p
 		}
-		return p
 	}
-	slog.Warn("No calendar provider configured — calendar tools disabled")
-	return nil
+
+	switch {
+	case google != nil && microsoft != nil:
+		slog.Info("calendar: using both Google Calendar and Outlook (Google primary)")
+		return calendar.NewMultiProvider(google, google, microsoft)
+	case google != nil:
+		return google
+	case microsoft != nil:
+		return microsoft
+	default:
+		slog.Warn("No calendar provider configured — calendar tools disabled")
+		return nil
+	}
 }
 
 // newBuilderConfig returns a code.Config for the Builder Agent sandbox.
