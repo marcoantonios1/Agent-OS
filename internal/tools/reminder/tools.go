@@ -14,7 +14,6 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/sessions"
-	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
 
 // ── SetTool ───────────────────────────────────────────────────────────────────
@@ -61,7 +60,7 @@ func (t *SetTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 		return `{"error":"no user ID in context"}`, nil
 	}
 	sessionID := approval.SessionIDFromContext(ctx)
-	channelID := channelIDFromContext(ctx)
+	channelID := sessions.ChannelIDFromContext(ctx)
 
 	var in setInput
 	if err := json.Unmarshal(input, &in); err != nil {
@@ -268,16 +267,3 @@ func parseWhen(s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("cannot parse time %q — use 'in N minutes/hours/days' or ISO-8601", s)
 }
 
-// channelIDFromContext extracts the channel ID injected by the router/handler.
-// Returns empty string if not present; the worker will skip delivery gracefully.
-func channelIDFromContext(ctx context.Context) types.ChannelID {
-	v, _ := ctx.Value(channelIDKey{}).(types.ChannelID)
-	return v
-}
-
-type channelIDKey struct{}
-
-// WithChannelID returns a copy of ctx carrying the given channelID.
-func WithChannelID(ctx context.Context, id types.ChannelID) context.Context {
-	return context.WithValue(ctx, channelIDKey{}, id)
-}
