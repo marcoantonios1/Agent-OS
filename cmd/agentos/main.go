@@ -91,6 +91,10 @@ func main() {
 	r.Users = userStore
 	h := web.NewHandler(r, llm)
 
+	// Web sessions have no persistent connection — register a no-op notifier
+	// that logs a warning when a web reminder fires.
+	reminderWorker.AddNotifier(web.ReminderNotifier{})
+
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
 		Handler: h,
@@ -110,6 +114,7 @@ func main() {
 	var discordHandler *discord.Handler
 	if cfg.DiscordConfigured() {
 		discordHandler = discord.New(r, cfg.DiscordBotToken, cfg.DiscordGuildID, cfg.DiscordPrefix)
+		reminderWorker.AddNotifier(discordHandler)
 		go func() {
 			if err := discordHandler.Start(ctx); err != nil {
 				slog.Error("discord channel error", "error", err)
@@ -127,6 +132,7 @@ func main() {
 			slog.Error("whatsapp: setup failed", "error", err)
 			os.Exit(1)
 		}
+		reminderWorker.AddNotifier(whatsAppHandler)
 		go func() {
 			if err := whatsAppHandler.Start(ctx); err != nil {
 				slog.Error("whatsapp channel error", "error", err)
