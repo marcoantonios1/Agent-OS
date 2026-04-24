@@ -245,10 +245,17 @@ func (h *Handler) send(ctx context.Context, to watypes.JID, text string) error {
 		Conversation: strPtr(text),
 	})
 	if err != nil {
-		h.log.ErrorContext(ctx, "whatsapp: send error", "to", to, "error", err)
+		h.logger().ErrorContext(ctx, "whatsapp: send error", "to", to, "error", err)
 		return fmt.Errorf("whatsapp: send to %s: %w", to, err)
 	}
 	return nil
+}
+
+func (h *Handler) logger() *slog.Logger {
+	if h.log != nil {
+		return h.log
+	}
+	return slog.Default()
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

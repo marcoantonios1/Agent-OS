@@ -26,10 +26,12 @@ func TestWhatsAppNotifier_SkipsNonWhatsAppSession(t *testing.T) {
 }
 
 func TestWhatsAppNotifier_InvalidJID(t *testing.T) {
+	// ParseJID errors when the user part contains an unexpected number of dots
+	// (AD-JID format requires exactly "user.agent:device@server").
 	h := &Handler{}
 	err := h.NotifyReminder(context.Background(), &sessions.Reminder{
 		ID:        "r1",
-		SessionID: "whatsapp:not-a-valid-jid!!!",
+		SessionID: "whatsapp:a.b.c@s.whatsapp.net",
 		Message:   "ping",
 	})
 	if err == nil {
