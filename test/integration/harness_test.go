@@ -259,14 +259,17 @@ func newStack(cfg stackConfig) *testStack {
 		projectStore = memory.NewProjectStore()
 	}
 
+	builderAgent := builder.New(agentLLM, store, code.Config{SandboxDir: sandboxDir}, projectStore, "gemma4:26b")
+
 	agents := map[router.Intent]router.Agent{
 		router.IntentComms:    comms.New(agentLLM, cfg.emailProv, cfg.calProv, approvals, userStore, memory.NewReminderStore(), "gemma4:26b"),
-		router.IntentBuilder:  builder.New(agentLLM, store, code.Config{SandboxDir: sandboxDir}, projectStore, "gemma4:26b"),
+		router.IntentBuilder:  builderAgent,
 		router.IntentResearch: research.New(agentLLM, newWebSearchRegistry(searchProv), "gemma4:26b"),
 	}
 
 	r := router.New(classifier, agents, store, approvals)
 	r.Users = userStore
+	builderAgent.SetSubAgentCaller(r)
 	h := web.NewHandler(r, nil)
 	srv := httptest.NewServer(h)
 

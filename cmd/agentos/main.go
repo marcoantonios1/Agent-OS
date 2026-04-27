@@ -81,14 +81,17 @@ func main() {
 
 	reminderWorker := reminder.NewWorker(reminderStore)
 
+	builderAgent := builder.New(llm, store, newBuilderConfig(cfg), projectStore, cfg.BuilderModel)
+
 	agents := map[router.Intent]router.Agent{
 		router.IntentComms:    comms.New(llm, newEmailProvider(ctx, cfg), newCalendarProvider(ctx, cfg), approvals, userStore, reminderStore, cfg.CommsModel),
-		router.IntentBuilder:  builder.New(llm, store, newBuilderConfig(cfg), projectStore, cfg.BuilderModel),
+		router.IntentBuilder:  builderAgent,
 		router.IntentResearch: research.New(llm, newWebSearchRegistry(cfg), cfg.ResearchModel),
 	}
 
 	r := router.New(classifier, agents, store, approvals)
 	r.Users = userStore
+	builderAgent.SetSubAgentCaller(r)
 	h := web.NewHandler(r, llm)
 
 	// Web sessions have no persistent connection — register a no-op notifier
