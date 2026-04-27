@@ -94,6 +94,7 @@ func main() {
 
 	r := router.New(classifier, agents, store, approvals)
 	r.Users = userStore
+	r.BuilderNotifier = web.ReminderNotifier{} // web: logs only; Discord overrides below
 	builderAgent.SetSubAgentCaller(r)
 	h := web.NewHandler(r, llm)
 
@@ -121,6 +122,7 @@ func main() {
 	if cfg.DiscordConfigured() {
 		discordHandler = discord.New(r, cfg.DiscordBotToken, cfg.DiscordGuildID, cfg.DiscordPrefix)
 		reminderWorker.AddNotifier(discordHandler)
+		r.BuilderNotifier = discordHandler // Discord can push progress mid-build
 		go func() {
 			if err := discordHandler.Start(ctx); err != nil {
 				slog.Error("discord channel error", "error", err)
