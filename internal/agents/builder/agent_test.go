@@ -311,6 +311,132 @@ func TestSessionMetadataPersistedAcrossTurns(t *testing.T) {
 	}
 }
 
+// ── SubAgentCaller / research_query tests ─────────────────────────────────────
+
+// mockSubCaller is a SubAgentCaller that records calls and returns a fixed reply.
+type mockSubCaller struct {
+	calls  []subCall
+	result string
+	err    error
+}
+
+type subCall struct {
+	agentID string
+	prompt  string
+}
+
+func (m *mockSubCaller) Call(_ context.Context, agentID, prompt string) (string, error) {
+	m.calls = append(m.calls, subCall{agentID, prompt})
+	return m.result, m.err
+}
+
+func TestResearchQueryTool_RegisteredWhenSubCallerSet(t *testing.T) {
+	// After SetSubAgentCaller, research_query must appear in the LLM's tool list.
+	var capturedTools []string
+	llm := &capturingLLM{
+		reply: "Let me research that.",
+		capture: func(msgs []types.ConversationTurn) {},
+	}
+	llm2 := &toolCapturingLLM{
+		reply: "Done.",
+		onCall: func(defs []costguard.ToolDefinition) {
+			for _, d := range defs {
+				capturedTools = append(capturedTools, d.Name)
+			}
+		},
+	}
+	_ = llm
+	a := newAgent(t, llm2, newStore(t))
+	a.SetSubAgentCaller(&mockSubCaller{result: "findings"})
+
+	handle(t, a, "s1", "Build a padel app — research competitors first", nil)
+
+	found := false
+	for _, name := range capturedTools {
+		if name == "research_query" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("research_query not found in LLM tool definitions; got: %v", capturedTools)
+	}
+}
+
+func TestResearchQueryTool_NotRegisteredWhenSubCallerNil(t *testing.T) {
+	// Without SetSubAgentCaller, research_query must NOT appear in the tool list.
+	var capturedTools []string
+	llm := &toolCapturingLLM{
+		reply: "Done.",
+		onCall: func(defs []costguard.ToolDefinition) {
+			for _, d := range defs {
+				capturedTools = append(capturedTools, d.Name)
+			}
+		},
+	}
+
+	a := newAgent(t, llm, newStore(t))
+	// Do NOT call SetSubAgentCaller.
+	handle(t, a, "s1", "Build a padel app", nil)
+
+	for _, name := range capturedTools {
+		if name == "research_query" {
+			t.Error("research_query appeared in tool definitions but SubAgentCaller is nil")
+		}
+	}
+}
+
+func TestResearchQueryTool_InvokesSubCaller(t *testing.T) {
+	// When the LLM calls research_query, the SubAgentCaller must be invoked with
+	// agentID="research" and the query from the LLM arguments.
+	caller := &mockSubCaller{result: "Competitor X charges $10/month."}
+
+	queryArgs, _ := json.Marshal(map[string]string{
+		"query": "padel app competitors pricing",
+	})
+	llm := &seqLLM{responses: []costguard.CompletionResponse{
+		// Step 1: call research_query tool
+		{ToolCalls: []types.ToolCall{{ID: "rq1", Name: "research_query", Arguments: string(queryArgs)}}},
+		// Step 2: final text after seeing tool result
+		textReply("Based on research: Competitor X charges $10/month. We'll price at $8."),
+	}}
+
+	a := newAgent(t, llm, newStore(t))
+	a.SetSubAgentCaller(caller)
+
+	resp := handle(t, a, "s1", "Research competitors for our padel app", nil)
+
+	if len(caller.calls) != 1 {
+		t.Fatalf("SubAgentCaller.Call invoked %d times, want 1", len(caller.calls))
+	}
+	if caller.calls[0].agentID != "research" {
+		t.Errorf("agentID = %q, want %q", caller.calls[0].agentID, "research")
+	}
+	if caller.calls[0].prompt != "padel app competitors pricing" {
+		t.Errorf("prompt = %q, want %q", caller.calls[0].prompt, "padel app competitors pricing")
+	}
+	if !strings.Contains(resp.Output, "Competitor X") {
+		t.Errorf("research result not incorporated into output: %s", resp.Output)
+	}
+}
+
+// toolCapturingLLM captures the ToolDefinitions passed with each Complete call.
+type toolCapturingLLM struct {
+	reply  string
+	onCall func([]costguard.ToolDefinition)
+}
+
+func (l *toolCapturingLLM) Complete(_ context.Context, req costguard.CompletionRequest) (costguard.CompletionResponse, error) {
+	l.onCall(req.Tools)
+	return costguard.CompletionResponse{Content: l.reply}, nil
+}
+
+func (l *toolCapturingLLM) Stream(_ context.Context, _ costguard.CompletionRequest) (<-chan costguard.StreamChunk, error) {
+	ch := make(chan costguard.StreamChunk)
+	close(ch)
+	return ch, nil
+}
+
 // ── test doubles ──────────────────────────────────────────────────────────────
 
 type capturingLLM struct {
