@@ -58,12 +58,19 @@ The valid intent values are:
                          "What's on my calendar today?",
                          "Schedule a meeting with Alice tomorrow at 3pm"
 
-- "builder"  – Writing, editing, reviewing, or debugging code; creating scripts,
+- "builder"  – Building, planning, or designing software products or features:
+               writing, editing, reviewing, or debugging code; creating scripts,
                configuration files, or any software artefact; explaining how
-               a piece of code works.
+               code works; gathering requirements, writing specs, or breaking a
+               project into tasks — even when research is mentioned as a step
+               ("research X before building" is still primarily builder).
                Examples: "Write a Python function to parse CSV",
                          "Why is my Go build failing?",
-                         "Refactor this function to use generics"
+                         "Refactor this function to use generics",
+                         "Build me a padel app",
+                         "Build me a padel app — research competitors before writing the spec",
+                         "Help me design the architecture for a booking system",
+                         "Start building a todo app, look up best practices first"
 
 - "research" – Searching the web or external sources for information; summarising
                articles, news, or documents found online; answering factual questions
@@ -86,6 +93,10 @@ Examples:
   → {"intents": ["comms", "builder"]}
 - "Research GraphQL vs REST, then write me an implementation"
   → {"intents": ["research", "builder"]}
+- "Build me a padel app — research competitors before writing the spec"
+  → {"intents": ["builder"]}
+- "Build me a todo app, look up best practices first"
+  → {"intents": ["builder"]}
 - "Send an email to Alice"
   → {"intents": ["comms"]}
 - "Check my emails and summarise them"
