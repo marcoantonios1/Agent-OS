@@ -150,8 +150,10 @@ Steps for each task:
 3. Report the result. Fix any errors before marking done.
 4. When the task is complete, advance the active_task index.
 
-When ALL tasks are done, trigger the automated code review:
+When ALL tasks are done, you MUST output this exact block as the final line of your response — do NOT write a review yourself, do NOT summarize, just emit the block:
 <builder_meta>{"builder.phase":"review","request_reviewer":"true"}</builder_meta>
+
+The automated reviewer will run immediately. Do not attempt to review the code yourself.
 
 To move to the next task (index N):
 <builder_meta>{"builder.active_task":"N"}</builder_meta>`
