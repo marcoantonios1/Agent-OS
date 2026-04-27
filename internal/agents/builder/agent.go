@@ -293,6 +293,26 @@ func (a *Agent) Handle(ctx context.Context, req types.AgentRequest) (types.Agent
 
 	phase := metaGet(meta, KeyPhase, PhaseRequirements)
 
+	// Direct autonomous trigger: user approves in tasks phase with an explicit
+	// "autonomously" signal and the task list is already loaded in metadata.
+	// We detect this ourselves rather than waiting for the LLM to emit the meta
+	// block, because the model may skip the block and code directly.
+	if phase == PhaseTasks && isAutonomousRequest(req.Input) {
+		if taskJSON := metaGet(meta, KeyTasks, ""); taskJSON != "" {
+			slog.InfoContext(ctx, "builder: autonomous mode triggered by user",
+				"session_id", req.SessionID)
+			meta[KeyPhase] = PhaseCodegen
+			meta[KeyAutonomous] = "true"
+			_ = a.sessions.SetMetadata(req.SessionID, KeyPhase, PhaseCodegen)
+			_ = a.sessions.SetMetadata(req.SessionID, KeyAutonomous, "true")
+			if project != nil {
+				project.Phase = PhaseCodegen
+				_ = a.projects.SaveProject(project)
+			}
+			return a.runAutonomous(ctx, req, meta, project, projectID)
+		}
+	}
+
 	// Autonomous mode: loop through all codegen tasks without user input.
 	if metaGet(meta, KeyAutonomous, "") == "true" && phase == PhaseCodegen {
 		slog.InfoContext(ctx, "agent_start",
@@ -691,6 +711,22 @@ func extractMeta(raw string) (visible string, meta map[string]string) {
 		}
 	}
 	return visible, meta
+}
+
+// isAutonomousRequest returns true when the user's input signals they want the
+// builder to run all codegen tasks without interruption.
+func isAutonomousRequest(input string) bool {
+	lower := strings.ToLower(strings.TrimSpace(input))
+	for _, kw := range []string{
+		"autonomously", "autonomous", "build autonomously",
+		"run autonomously", "go ahead and build", "build in background",
+		"run in background", "build it all", "just build it",
+	} {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 // metaGet returns meta[key] or defaultVal if the key is absent or meta is nil.
