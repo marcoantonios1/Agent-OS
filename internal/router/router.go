@@ -277,6 +277,7 @@ func (r *Router) dispatch(
 		History:   history,
 		Input:     msg.Text,
 		Metadata:  agentMeta,
+		SubCaller: r,
 	})
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
@@ -417,6 +418,7 @@ func (r *Router) streamDispatch(
 		History:   history,
 		Input:     msg.Text,
 		Metadata:  agentMeta,
+		SubCaller: r,
 	}
 
 	if sa, ok := agent.(StreamingAgent); ok {
@@ -452,6 +454,27 @@ func singleChunk(text string) <-chan string {
 	ch <- text
 	close(ch)
 	return ch
+}
+
+// Call implements types.SubAgentCaller. It dispatches prompt directly to the
+// named agent (identified by its intent string, e.g. "research"), bypassing
+// classification and session history persistence. The parent session context
+// (approval store, user ID, channel ID) carried in ctx is preserved so
+// approval-gated tools still function correctly.
+func (r *Router) Call(ctx context.Context, agentID string, prompt string) (string, error) {
+	intent := Intent(agentID)
+	agent, ok := r.Agents[intent]
+	if !ok {
+		return "", fmt.Errorf("sub-agent %q is not registered", agentID)
+	}
+	r.log.InfoContext(ctx, "sub_agent_call", "agent_id", agentID)
+	resp, err := agent.Handle(ctx, types.AgentRequest{
+		Input: prompt,
+	})
+	if err != nil {
+		return "", fmt.Errorf("sub-agent %s: %w", agentID, err)
+	}
+	return resp.Output, nil
 }
 
 // persistTurns appends both the user and assistant turns to the session store.
