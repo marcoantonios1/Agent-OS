@@ -49,7 +49,11 @@ type Router struct {
 	// dispatch and injected into AgentRequest.Metadata under "user.profile"
 	// so agents can personalise their system prompts.
 	Users sessions.UserStore
-	log   *slog.Logger
+	// BuilderNotifier is optional. When set, it is passed into every
+	// AgentRequest so the Builder Agent can send out-of-band progress
+	// notifications (e.g. "Task 2/5 complete") to the user's channel.
+	BuilderNotifier types.ProgressNotifier
+	log             *slog.Logger
 }
 
 // New returns a Router with the given classifier, agents, session store, and
@@ -278,6 +282,7 @@ func (r *Router) dispatch(
 		Input:     msg.Text,
 		Metadata:  agentMeta,
 		SubCaller: r,
+		Notifier:  r.BuilderNotifier,
 	})
 	latency := time.Since(start).Milliseconds()
 	if err != nil {
@@ -419,6 +424,7 @@ func (r *Router) streamDispatch(
 		Input:     msg.Text,
 		Metadata:  agentMeta,
 		SubCaller: r,
+		Notifier:  r.BuilderNotifier,
 	}
 
 	if sa, ok := agent.(StreamingAgent); ok {
