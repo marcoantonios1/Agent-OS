@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -61,6 +62,18 @@ const (
 // KeyRequestReviewer is a one-shot meta key that triggers the Reviewer Agent.
 // It is consumed and deleted in Handle() and never persisted to the session.
 const KeyRequestReviewer = "request_reviewer"
+
+// KeyAutonomous enables background execution: when "true", Handle() loops
+// through all remaining codegen tasks without waiting for user input between
+// tasks. Cleared automatically when autonomous execution finishes or blocks.
+const KeyAutonomous = "builder.autonomous"
+
+// autonomousMaxIter caps the number of LLM turns in one autonomous run.
+const autonomousMaxIter = 30
+
+// autonomousMaxRetries is how many consecutive iterations without task
+// progress before autonomous mode surfaces a blocker to the user.
+const autonomousMaxRetries = 3
 
 const metaOpen  = "<builder_meta>"
 const metaClose = "</builder_meta>"
@@ -138,7 +151,9 @@ Format as JSON array at the end so it can be parsed:
 <builder_meta>{"builder.phase":"codegen","builder.tasks":"[{\"index\":0,\"title\":\"...\",\"files\":[\"...\"],\"description\":\"...\"}, ...]","builder.active_task":"0"}</builder_meta>
 
 Before embedding the block, show the task list to the user in readable markdown
-and ask: "Ready to start coding? Reply 'yes' to begin with task 1."`
+and ask: "Ready to start coding? Reply 'yes' to step through tasks one at a time, or 'yes, build autonomously' to run all tasks in the background without interruption."
+
+If the user approves autonomous mode (says "build autonomously", "go ahead and build it", "run autonomously", or expresses intent to build without interruption), include "builder.autonomous":"true" in the meta block.`
 
 const codegenPrompt = `
 ## Current phase: CODEGEN
@@ -277,6 +292,38 @@ func (a *Agent) Handle(ctx context.Context, req types.AgentRequest) (types.Agent
 	}
 
 	phase := metaGet(meta, KeyPhase, PhaseRequirements)
+
+	// Direct autonomous trigger: user approves in tasks phase with an explicit
+	// "autonomously" signal and the task list is already loaded in metadata.
+	// We detect this ourselves rather than waiting for the LLM to emit the meta
+	// block, because the model may skip the block and code directly.
+	if phase == PhaseTasks && isAutonomousRequest(req.Input) {
+		if taskJSON := metaGet(meta, KeyTasks, ""); taskJSON != "" {
+			slog.InfoContext(ctx, "builder: autonomous mode triggered by user",
+				"session_id", req.SessionID)
+			meta[KeyPhase] = PhaseCodegen
+			meta[KeyAutonomous] = "true"
+			_ = a.sessions.SetMetadata(req.SessionID, KeyPhase, PhaseCodegen)
+			_ = a.sessions.SetMetadata(req.SessionID, KeyAutonomous, "true")
+			if project != nil {
+				project.Phase = PhaseCodegen
+				_ = a.projects.SaveProject(project)
+			}
+			return a.runAutonomous(ctx, req, meta, project, projectID)
+		}
+	}
+
+	// Autonomous mode: loop through all codegen tasks without user input.
+	if metaGet(meta, KeyAutonomous, "") == "true" && phase == PhaseCodegen {
+		slog.InfoContext(ctx, "agent_start",
+			"agent_id", string(agentID),
+			"session_id", req.SessionID,
+			"project_id", projectID,
+			"phase", phase,
+			"mode", "autonomous",
+		)
+		return a.runAutonomous(ctx, req, meta, project, projectID)
+	}
 
 	slog.InfoContext(ctx, "agent_start",
 		"agent_id", string(agentID),
@@ -470,6 +517,169 @@ func (a *Agent) runReviewer(ctx context.Context, caller types.SubAgentCaller, sp
 	}
 }
 
+// buildTask mirrors the JSON task objects stored in builder.tasks.
+type buildTask struct {
+	Index       int      `json:"index"`
+	Title       string   `json:"title"`
+	Files       []string `json:"files"`
+	Description string   `json:"description"`
+}
+
+// parseTaskList unmarshals the JSON stored in builder.tasks. Returns nil on error.
+func parseTaskList(raw string) []buildTask {
+	var tasks []buildTask
+	_ = json.Unmarshal([]byte(raw), &tasks)
+	return tasks
+}
+
+// parseTaskIndex converts the string active_task index to an int.
+func parseTaskIndex(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
+}
+
+// runAutonomous loops through all remaining codegen tasks without waiting for
+// user input between tasks. It persists state after each LLM turn and sends
+// a progress notification whenever the active task index advances. It stops
+// and surfaces a blocker to the user if the same task fails autonomousMaxRetries
+// times in a row, or after autonomousMaxIter total LLM turns.
+func (a *Agent) runAutonomous(
+	ctx context.Context,
+	req types.AgentRequest,
+	meta map[string]string,
+	project *sessions.Project,
+	projectID string,
+) (types.AgentResponse, error) {
+	tasks := parseTaskList(metaGet(meta, KeyTasks, "[]"))
+	totalTasks := len(tasks)
+
+	var projectName string
+	if project != nil {
+		projectName = project.Name
+	}
+
+	// Accumulate history so each iteration has context from the previous one.
+	history := make([]types.ConversationTurn, len(req.History))
+	copy(history, req.History)
+
+	prevActiveTask := metaGet(meta, KeyActiveTask, "0")
+	stuckCount := 0
+	var lastVisible string
+
+	for iter := 0; iter < autonomousMaxIter; iter++ {
+		phase := metaGet(meta, KeyPhase, PhaseCodegen)
+		activeTask := metaGet(meta, KeyActiveTask, "0")
+		spec := metaGet(meta, KeySpec, "")
+		taskJSON := metaGet(meta, KeyTasks, "")
+
+		prompt := buildSystemPrompt(phase, spec, taskJSON, activeTask, projectName, projectID, nil)
+
+		msgs := make([]types.ConversationTurn, 0, len(history)+2)
+		msgs = append(msgs, types.ConversationTurn{Role: "system", Content: prompt})
+		msgs = append(msgs, history...)
+
+		var userMsg string
+		if iter == 0 {
+			userMsg = req.Input
+		} else {
+			userMsg = "Continue with the next task."
+		}
+		msgs = append(msgs, types.ConversationTurn{Role: "user", Content: userMsg})
+
+		raw, err := a.loop.Run(ctx, costguard.CompletionRequest{
+			Model:     a.model,
+			Messages:  msgs,
+			MaxTokens: 8192,
+		})
+		if err != nil {
+			return types.AgentResponse{}, fmt.Errorf("builder autonomous iter %d: %w", iter, err)
+		}
+
+		visible, newMeta := extractMeta(raw)
+		lastVisible = visible
+
+		// Handle reviewer trigger before any other meta processing.
+		if newMeta[KeyRequestReviewer] == "true" && req.SubCaller != nil {
+			visible, newMeta = a.runReviewer(ctx, req.SubCaller, spec, newMeta)
+			lastVisible = visible
+		}
+		delete(newMeta, KeyRequestReviewer)
+
+		// Merge new meta and persist.
+		for k, v := range newMeta {
+			meta[k] = v
+			_ = a.sessions.SetMetadata(req.SessionID, k, v)
+		}
+		_ = a.sessions.SetMetadata(req.SessionID, KeyAutonomous, "") // clear flag
+
+		// Persist to project store.
+		if project != nil && len(newMeta) > 0 {
+			if v, ok := newMeta[KeyPhase]; ok {
+				project.Phase = v
+			}
+			if v, ok := newMeta[KeySpec]; ok {
+				project.Spec = v
+			}
+			if v, ok := newMeta[KeyTasks]; ok {
+				project.Tasks = v
+			}
+			if v, ok := newMeta[KeyActiveTask]; ok {
+				project.ActiveTask = v
+			}
+			if err := a.projects.SaveProject(project); err != nil {
+				slog.WarnContext(ctx, "builder: autonomous: failed to save project", "error", err)
+			}
+		}
+
+		newActiveTask := metaGet(meta, KeyActiveTask, "0")
+
+		if newActiveTask != prevActiveTask {
+			stuckCount = 0
+			// Notify progress: task N/total complete.
+			taskIdx := parseTaskIndex(newActiveTask) // 0-based new index
+			msg := fmt.Sprintf("✅ Task %d/%d complete", taskIdx, totalTasks)
+			if taskIdx > 0 && taskIdx <= len(tasks) {
+				msg += ": " + tasks[taskIdx-1].Title
+			}
+			slog.InfoContext(ctx, "builder: autonomous progress", "task", taskIdx, "total", totalTasks)
+			if req.Notifier != nil {
+				if err := req.Notifier.NotifyProgress(ctx, req.SessionID, req.UserID, msg); err != nil {
+					slog.WarnContext(ctx, "builder: progress notification failed", "error", err)
+				}
+			}
+			prevActiveTask = newActiveTask
+		} else {
+			stuckCount++
+			if stuckCount >= autonomousMaxRetries {
+				slog.WarnContext(ctx, "builder: autonomous mode blocked",
+					"task", activeTask, "stuck_count", stuckCount)
+				blocker := fmt.Sprintf(
+					"🛑 **Task %s failed after %d attempts — stopping autonomous mode.**\n\n%s\n\nWhat should I do?",
+					activeTask, autonomousMaxRetries, visible,
+				)
+				return types.AgentResponse{AgentID: agentID, Output: blocker, Metadata: meta}, nil
+			}
+		}
+
+		// Add this turn to history for the next iteration.
+		history = append(history,
+			types.ConversationTurn{Role: "user", Content: userMsg},
+			types.ConversationTurn{Role: "assistant", Content: raw},
+		)
+
+		// Terminal conditions.
+		if metaGet(meta, KeyPhase, "") == PhaseDone {
+			break
+		}
+		// Reviewer returned a non-done verdict (NEEDS_WORK/BLOCKED) — stop autonomous.
+		if newMeta[KeyRequestReviewer] == "" && (strings.Contains(lastVisible, "🔄") || strings.Contains(lastVisible, "🚫")) {
+			break
+		}
+	}
+
+	return types.AgentResponse{AgentID: agentID, Output: lastVisible, Metadata: meta}, nil
+}
+
 // extractMeta finds and removes the <builder_meta>{...}</builder_meta> block
 // from raw LLM output. Returns the visible text and the parsed key/value map.
 func extractMeta(raw string) (visible string, meta map[string]string) {
@@ -501,6 +711,22 @@ func extractMeta(raw string) (visible string, meta map[string]string) {
 		}
 	}
 	return visible, meta
+}
+
+// isAutonomousRequest returns true when the user's input signals they want the
+// builder to run all codegen tasks without interruption.
+func isAutonomousRequest(input string) bool {
+	lower := strings.ToLower(strings.TrimSpace(input))
+	for _, kw := range []string{
+		"autonomously", "autonomous", "build autonomously",
+		"run autonomously", "go ahead and build", "build in background",
+		"run in background", "build it all", "just build it",
+	} {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 // metaGet returns meta[key] or defaultVal if the key is absent or meta is nil.

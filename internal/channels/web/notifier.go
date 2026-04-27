@@ -28,3 +28,14 @@ func (ReminderNotifier) NotifyReminder(ctx context.Context, r *sessions.Reminder
 	)
 	return nil
 }
+
+// NotifyProgress implements types.ProgressNotifier for web sessions.
+// Web sessions have no persistent connection for push; progress is logged only.
+func (ReminderNotifier) NotifyProgress(ctx context.Context, sessionID, userID, text string) error {
+	if strings.HasPrefix(sessionID, "discord:") || strings.HasPrefix(sessionID, "whatsapp:") {
+		return nil // handled by the channel-specific notifier
+	}
+	slog.InfoContext(ctx, "web: builder progress (no push available)",
+		"session_id", sessionID, "user_id", userID, "text", text)
+	return nil
+}

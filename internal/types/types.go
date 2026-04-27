@@ -15,6 +15,13 @@ type SubAgentCaller interface {
 	Call(ctx context.Context, agentID string, prompt string) (string, error)
 }
 
+// ProgressNotifier delivers build-progress updates to the user's active channel.
+// Implementations are provided by each channel handler that supports push
+// notifications (Discord, WhatsApp, etc.). The web channel uses a no-op.
+type ProgressNotifier interface {
+	NotifyProgress(ctx context.Context, sessionID, userID, text string) error
+}
+
 // ChannelID identifies the communication channel a message originates from
 // (e.g. "web", "discord", "whatsapp", "telegram").
 type ChannelID string
@@ -96,6 +103,9 @@ type AgentRequest struct {
 	// SubCaller is set by the router so agents can dispatch sub-tasks to other
 	// agents. Nil when not wired (e.g., in unit tests that don't need it).
 	SubCaller SubAgentCaller
+	// Notifier delivers out-of-band progress updates to the user's channel.
+	// Nil when the channel does not support push notifications.
+	Notifier ProgressNotifier
 }
 
 // AgentResponse is the output returned by an agent after processing a request.
