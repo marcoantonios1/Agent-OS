@@ -33,6 +33,7 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/tools"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/code"
 	toolproject "github.com/marcoantonios1/Agent-OS/internal/tools/project"
+	toolresearch "github.com/marcoantonios1/Agent-OS/internal/tools/research"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
 
@@ -193,6 +194,17 @@ func New(llm costguard.LLMClient, store sessions.SessionStore, cfg code.Config, 
 		projects: projects,
 		model:    model,
 	}
+}
+
+// SetSubAgentCaller registers the research_query tool into the agent's registry.
+// It must be called after New() and before the first Handle() invocation.
+// It is a no-op when caller is nil, so callers without a wired sub-agent get
+// graceful degradation (research_query simply won't appear in tool definitions).
+func (a *Agent) SetSubAgentCaller(caller types.SubAgentCaller) {
+	if caller == nil {
+		return
+	}
+	a.loop.Registry.Register(toolresearch.NewQueryTool(caller))
 }
 
 // Handle processes a single user turn. It reads the current phase from session

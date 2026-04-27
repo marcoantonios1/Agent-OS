@@ -2,7 +2,18 @@
 // channels, the router, and tools within Agent OS.
 package types
 
-import "time"
+import (
+	"context"
+	"time"
+)
+
+// SubAgentCaller lets an agent dispatch a task to another named agent without
+// going through the full router cycle. The sub-call bypasses classification,
+// runs within the parent session context, and does NOT append its turns to the
+// main session history.
+type SubAgentCaller interface {
+	Call(ctx context.Context, agentID string, prompt string) (string, error)
+}
 
 // ChannelID identifies the communication channel a message originates from
 // (e.g. "web", "discord", "whatsapp", "telegram").
@@ -82,6 +93,9 @@ type AgentRequest struct {
 	Input string
 	// Metadata holds arbitrary request-scoped key/value pairs.
 	Metadata map[string]string
+	// SubCaller is set by the router so agents can dispatch sub-tasks to other
+	// agents. Nil when not wired (e.g., in unit tests that don't need it).
+	SubCaller SubAgentCaller
 }
 
 // AgentResponse is the output returned by an agent after processing a request.
