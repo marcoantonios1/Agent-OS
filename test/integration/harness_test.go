@@ -16,6 +16,7 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/agents/builder"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/comms"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/research"
+	"github.com/marcoantonios1/Agent-OS/internal/agents/reviewer"
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"

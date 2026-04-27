@@ -13,6 +13,7 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/agents/builder"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/comms"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/research"
+	"github.com/marcoantonios1/Agent-OS/internal/agents/reviewer"
 	"github.com/marcoantonios1/Agent-OS/internal/app"
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/discord"
@@ -81,12 +82,14 @@ func main() {
 
 	reminderWorker := reminder.NewWorker(reminderStore)
 
-	builderAgent := builder.New(llm, store, newBuilderConfig(cfg), projectStore, cfg.BuilderModel)
+	builderCfg := newBuilderConfig(cfg)
+	builderAgent := builder.New(llm, store, builderCfg, projectStore, cfg.BuilderModel)
 
 	agents := map[router.Intent]router.Agent{
-		router.IntentComms:    comms.New(llm, newEmailProvider(ctx, cfg), newCalendarProvider(ctx, cfg), approvals, userStore, reminderStore, cfg.CommsModel),
-		router.IntentBuilder:  builderAgent,
-		router.IntentResearch: research.New(llm, newWebSearchRegistry(cfg), cfg.ResearchModel),
+		router.IntentComms:     comms.New(llm, newEmailProvider(ctx, cfg), newCalendarProvider(ctx, cfg), approvals, userStore, reminderStore, cfg.CommsModel),
+		router.IntentBuilder:   builderAgent,
+		router.IntentResearch:  research.New(llm, newWebSearchRegistry(cfg), cfg.ResearchModel),
+		router.IntentReviewer:  reviewer.New(llm, cfg.BuilderModel, builderCfg),
 	}
 
 	r := router.New(classifier, agents, store, approvals)
