@@ -55,7 +55,12 @@ const (
 	PhaseTasks        = "tasks"
 	PhaseCodegen      = "codegen"
 	PhaseReview       = "review"
+	PhaseDone         = "done"
 )
+
+// KeyRequestReviewer is a one-shot meta key that triggers the Reviewer Agent.
+// It is consumed and deleted in Handle() and never persisted to the session.
+const KeyRequestReviewer = "request_reviewer"
 
 const metaOpen  = "<builder_meta>"
 const metaClose = "</builder_meta>"
@@ -145,18 +150,24 @@ Steps for each task:
 3. Report the result. Fix any errors before marking done.
 4. When the task is complete, advance the active_task index.
 
-When all tasks are done, transition to review:
-<builder_meta>{"builder.phase":"review"}</builder_meta>
+When ALL tasks are done, trigger the automated code review:
+<builder_meta>{"builder.phase":"review","request_reviewer":"true"}</builder_meta>
 
 To move to the next task (index N):
 <builder_meta>{"builder.active_task":"N"}</builder_meta>`
 
 const reviewPrompt = `
 ## Current phase: REVIEW
-Your goal: summarise what was built, highlight any remaining open items, and ask
-whether the user wants to iterate or is satisfied.
+The Reviewer Agent is checking the generated code. If you are seeing this prompt,
+either the review has already run and the user wants to discuss results, or the
+reviewer was unavailable.
 
-If the user wants changes, reset the appropriate phase in your metadata block.`
+Summarise what was built and highlight any open items.
+If the user wants changes, reset to the appropriate phase:
+<builder_meta>{"builder.phase":"codegen"}</builder_meta>
+
+If the user is satisfied and wants to mark the project done:
+<builder_meta>{"builder.phase":"done"}</builder_meta>`
 
 // ── Agent ─────────────────────────────────────────────────────────────────────
 
@@ -306,8 +317,17 @@ func (a *Agent) Handle(ctx context.Context, req types.AgentRequest) (types.Agent
 		return types.AgentResponse{}, fmt.Errorf("builder agent: %w", err)
 	}
 
-	// Strip the metadata block from the visible output and persist each key.
+	// Strip the metadata block from the visible output.
 	visible, newMeta := extractMeta(raw)
+
+	// If the LLM requested a reviewer run, invoke it now and let the verdict
+	// override both the visible output and the next phase.
+	if newMeta[KeyRequestReviewer] == "true" && req.SubCaller != nil {
+		visible, newMeta = a.runReviewer(ctx, req.SubCaller, metaGet(meta, KeySpec, ""), newMeta)
+	}
+	// KeyRequestReviewer is a one-shot trigger — never persist it.
+	delete(newMeta, KeyRequestReviewer)
+
 	for k, v := range newMeta {
 		_ = a.sessions.SetMetadata(req.SessionID, k, v)
 	}
@@ -410,6 +430,42 @@ func buildSystemPrompt(phase, spec, tasks, activeTask, projectName, projectID st
 	}
 
 	return sb.String()
+}
+
+// runReviewer invokes the Reviewer Agent via SubAgentCaller, parses its
+// verdict, and returns the updated visible text and metadata map.
+// The caller must delete KeyRequestReviewer from the returned map before
+// persisting — that is handled by Handle().
+func (a *Agent) runReviewer(ctx context.Context, caller types.SubAgentCaller, spec string, meta map[string]string) (string, map[string]string) {
+	prompt := "Please review the generated code."
+	if spec != "" {
+		prompt = fmt.Sprintf("Please review the generated code.\n\nProject spec for context:\n\n%s", spec)
+	}
+
+	verdict, err := caller.Call(ctx, "reviewer", prompt)
+	if err != nil {
+		slog.WarnContext(ctx, "builder: reviewer call failed", "error", err)
+		return "Code review could not be completed: " + err.Error(), meta
+	}
+
+	// Copy meta so we don't mutate the original.
+	updated := make(map[string]string, len(meta))
+	for k, v := range meta {
+		updated[k] = v
+	}
+
+	upper := strings.ToUpper(verdict)
+	switch {
+	case strings.Contains(upper, "APPROVED"):
+		updated[KeyPhase] = PhaseDone
+		return "✅ **Code review passed — project complete!**\n\n" + verdict, updated
+	case strings.Contains(upper, "BLOCKED"):
+		// Stay in review so the user can decide how to proceed.
+		return "🚫 **Reviewer blocked the release — fundamental issues must be resolved.**\n\n" + verdict, updated
+	default: // NEEDS_WORK
+		updated[KeyPhase] = PhaseCodegen
+		return "🔄 **Reviewer found issues — returning to codegen.**\n\n" + verdict, updated
+	}
 }
 
 // extractMeta finds and removes the <builder_meta>{...}</builder_meta> block

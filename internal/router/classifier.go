@@ -25,6 +25,10 @@ const (
 	// IntentResearch routes to the research agent (searching for information,
 	// summarising articles, analysing data, answering factual questions).
 	IntentResearch Intent = "research"
+	// IntentReviewer routes to the reviewer agent. It is a sub-agent only —
+	// users cannot invoke it directly and it never appears in the classifier prompt.
+	// The Builder Agent calls it via SubAgentCaller.Call("reviewer", prompt).
+	IntentReviewer Intent = "reviewer"
 	// IntentUnknown is returned when classification fails or is ambiguous.
 	IntentUnknown Intent = "unknown"
 )
