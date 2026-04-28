@@ -96,6 +96,7 @@ func main() {
 	r.Users = userStore
 	r.BuilderNotifier = web.ReminderNotifier{} // web: logs only; Discord overrides below
 	builderAgent.SetSubAgentCaller(r)
+	reminderWorker.SetDispatcher(r)
 	h := web.NewHandler(r, llm)
 
 	// Web sessions have no persistent connection — register a no-op notifier

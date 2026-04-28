@@ -31,17 +31,21 @@ func NewSetTool(store sessions.ReminderStore) *SetTool {
 func (t *SetTool) Definition() costguard.ToolDefinition {
 	return costguard.ToolDefinition{
 		Name:        "reminder_set",
-		Description: "Schedule a follow-up reminder for the user. The reminder message will be sent back to the user at the specified time. Use natural language for 'when', e.g. 'in 30 minutes', 'in 2 hours', 'tomorrow at 9am', or an ISO-8601 datetime.",
+		Description: "Schedule a follow-up reminder for the user. The reminder message will be sent back to the user at the specified time. Use natural language for 'when', e.g. 'in 30 minutes', 'in 2 hours', 'tomorrow at 9am', or an ISO-8601 datetime. When the reminder involves following up on something context-dependent (e.g. 'follow up with Alice about the invoice'), set agent_prompt to a Comms Agent instruction that will be run at fire time to surface relevant context (e.g. 'The user needs to follow up with Alice about an invoice. Search Alice's recent emails and summarise the latest thread.').",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"message": map[string]any{
 					"type":        "string",
-					"description": "The reminder message to send the user when the reminder fires.",
+					"description": "The reminder message to show the user when the reminder fires.",
 				},
 				"when": map[string]any{
 					"type":        "string",
 					"description": "When to fire the reminder. Accepts relative durations ('in 30 minutes', 'in 2 hours', 'in 1 day') or absolute ISO-8601 datetimes.",
+				},
+				"agent_prompt": map[string]any{
+					"type":        "string",
+					"description": "Optional. A Comms Agent prompt to run at fire time to enrich the reminder with live context (e.g. latest emails, calendar events). Leave empty for simple time-based reminders.",
 				},
 			},
 			"required": []string{"message", "when"},
@@ -50,8 +54,9 @@ func (t *SetTool) Definition() costguard.ToolDefinition {
 }
 
 type setInput struct {
-	Message string `json:"message"`
-	When    string `json:"when"`
+	Message     string `json:"message"`
+	When        string `json:"when"`
+	AgentPrompt string `json:"agent_prompt,omitempty"`
 }
 
 func (t *SetTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
@@ -79,13 +84,14 @@ func (t *SetTool) Execute(ctx context.Context, input json.RawMessage) (string, e
 	}
 
 	r := &sessions.Reminder{
-		ID:        uuid.NewString(),
-		UserID:    userID,
-		SessionID: sessionID,
-		ChannelID: channelID,
-		Message:   in.Message,
-		FireAt:    fireAt,
-		CreatedAt: time.Now().UTC(),
+		ID:          uuid.NewString(),
+		UserID:      userID,
+		SessionID:   sessionID,
+		ChannelID:   channelID,
+		Message:     in.Message,
+		FireAt:      fireAt,
+		CreatedAt:   time.Now().UTC(),
+		AgentPrompt: in.AgentPrompt,
 	}
 	if err := t.store.Save(r); err != nil {
 		return "", fmt.Errorf("reminder_set: save: %w", err)

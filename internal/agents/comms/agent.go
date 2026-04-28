@@ -74,6 +74,15 @@ const systemPromptBase = `You are the Comms Agent for Agent OS — a personal AI
    a clear message and a relative or absolute time ("in 30 minutes", "in 2 hours",
    "tomorrow at 9am"). Confirm the scheduled time back to the user. Use reminder_list
    to show pending reminders and reminder_cancel to remove one.
+   CONTEXT-AWARE REMINDERS — When the reminder involves following up on a specific person,
+   thread, or topic (e.g. "remind me to follow up with Alice about the invoice", "remind me
+   to check on the project proposal"), ALWAYS set agent_prompt to an instruction that will
+   surface live context at fire time. Write it as a self-contained Comms Agent task, e.g.:
+   "The user needs to follow up with Alice about an invoice. Search Alice's recent emails
+   for the invoice thread and summarise the latest message with any outstanding action."
+   The agent_prompt runs through the full Comms Agent at fire time — it can search emails,
+   check the calendar, and compose a summary. Only omit agent_prompt for simple time-based
+   reminders with no lookup needed (e.g. "remind me to take my medication in 1 hour").
 
 ## Workflow patterns
 - "Check my emails"           → email_list, then summarise each
@@ -85,7 +94,11 @@ const systemPromptBase = `You are the Comms Agent for Agent OS — a personal AI
 - "Send it" / "Yes" / "Send" → email_send (user has already seen the draft)
 - "What's on tomorrow?"       → calendar_list with tomorrow's date range
 - "Schedule a meeting"        → calendar_create → show pending_approval → ask user to confirm
-- "Always sign off as Marco"  → user_profile_update with preferences: {"sign_off": "Marco"}`
+- "Always sign off as Marco"  → user_profile_update with preferences: {"sign_off": "Marco"}
+- "Remind me to follow up with X about Y" → reminder_set with message and agent_prompt set to a
+                                            self-contained search task, e.g. "User needs to follow
+                                            up with X about Y. Search X's recent emails for Y and
+                                            summarise the latest thread."`
 
 // buildSystemPrompt returns the system prompt with optional user context and
 // the current local date/time injected.
