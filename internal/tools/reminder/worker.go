@@ -64,6 +64,9 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
+// FireNow is exported for testing — it runs one fire cycle against the given time.
+func (w *Worker) FireNow(ctx context.Context, now time.Time) { w.fire(ctx, now) }
+
 func (w *Worker) fire(ctx context.Context, now time.Time) {
 	due, err := w.Store.Due(now)
 	if err != nil {
