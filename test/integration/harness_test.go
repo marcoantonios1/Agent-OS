@@ -216,15 +216,16 @@ type testStack struct {
 
 // stackConfig configures what providers the stack includes.
 type stackConfig struct {
-	llmResponses []costguard.CompletionResponse
-	streamChunks [][]string          // per-Stream()-call token slices for scriptedLLM
-	customLLM    costguard.LLMClient // if set, used instead of scripted responses
-	emailProv    *mockEmailProvider
-	calProv      calendar.CalendarProvider
-	searchProv   websearch.SearchProvider // nil → stub (empty results)
-	userStore    *memory.UserStore        // nil → empty in-memory store
-	projectStore *memory.ProjectStore     // nil → empty in-memory store
-	sandboxDir   string
+	llmResponses    []costguard.CompletionResponse
+	streamChunks    [][]string          // per-Stream()-call token slices for scriptedLLM
+	customLLM       costguard.LLMClient // if set, used instead of scripted responses
+	emailProv       *mockEmailProvider
+	calProv         calendar.CalendarProvider
+	searchProv      websearch.SearchProvider  // nil → stub (empty results)
+	userStore       *memory.UserStore         // nil → empty in-memory store
+	projectStore    *memory.ProjectStore      // nil → empty in-memory store
+	builderNotifier types.ProgressNotifier    // nil → no progress notifications
+	sandboxDir      string
 }
 
 // newStack spins up a full HTTP server with the given mocks. The caller must
@@ -272,6 +273,9 @@ func newStack(cfg stackConfig) *testStack {
 
 	r := router.New(classifier, agents, store, approvals)
 	r.Users = userStore
+	if cfg.builderNotifier != nil {
+		r.BuilderNotifier = cfg.builderNotifier
+	}
 	builderAgent.SetSubAgentCaller(r)
 	h := web.NewHandler(r, nil)
 	srv := httptest.NewServer(h)
