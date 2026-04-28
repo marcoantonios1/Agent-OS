@@ -32,15 +32,16 @@ func (s *SQLiteReminderStore) Save(r *sessions.Reminder) error {
 		createdAt = time.Now().UTC()
 	}
 	_, err := s.db.Exec(`
-		INSERT INTO reminders (id, session_id, user_id, channel_id, message, fire_at, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO reminders (id, session_id, user_id, channel_id, message, fire_at, created_at, agent_prompt)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
-			session_id = excluded.session_id,
-			user_id    = excluded.user_id,
-			channel_id = excluded.channel_id,
-			message    = excluded.message,
-			fire_at    = excluded.fire_at,
-			created_at = excluded.created_at`,
+			session_id   = excluded.session_id,
+			user_id      = excluded.user_id,
+			channel_id   = excluded.channel_id,
+			message      = excluded.message,
+			fire_at      = excluded.fire_at,
+			created_at   = excluded.created_at,
+			agent_prompt = excluded.agent_prompt`,
 		r.ID,
 		r.SessionID,
 		r.UserID,
@@ -48,6 +49,7 @@ func (s *SQLiteReminderStore) Save(r *sessions.Reminder) error {
 		r.Message,
 		r.FireAt.UTC(),
 		createdAt,
+		r.AgentPrompt,
 	)
 	if err != nil {
 		return fmt.Errorf("save reminder %s: %w", r.ID, err)
@@ -57,7 +59,7 @@ func (s *SQLiteReminderStore) Save(r *sessions.Reminder) error {
 
 func (s *SQLiteReminderStore) Get(id string) (*sessions.Reminder, error) {
 	row := s.db.QueryRow(
-		`SELECT id, session_id, user_id, channel_id, message, fire_at, created_at
+		`SELECT id, session_id, user_id, channel_id, message, fire_at, created_at, agent_prompt
 		 FROM reminders WHERE id = ?`, id)
 	r, err := scanReminder(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -79,7 +81,7 @@ func (s *SQLiteReminderStore) Delete(id string) error {
 
 func (s *SQLiteReminderStore) ListForUser(userID string) ([]*sessions.Reminder, error) {
 	rows, err := s.db.Query(
-		`SELECT id, session_id, user_id, channel_id, message, fire_at, created_at
+		`SELECT id, session_id, user_id, channel_id, message, fire_at, created_at, agent_prompt
 		 FROM reminders WHERE user_id = ? ORDER BY fire_at ASC`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list reminders for %s: %w", userID, err)
@@ -97,7 +99,7 @@ func (s *SQLiteReminderStore) Due(now time.Time) ([]*sessions.Reminder, error) {
 	defer tx.Rollback() //nolint:errcheck
 
 	rows, err := tx.Query(
-		`SELECT id, session_id, user_id, channel_id, message, fire_at, created_at
+		`SELECT id, session_id, user_id, channel_id, message, fire_at, created_at, agent_prompt
 		 FROM reminders WHERE fire_at <= ?`, now.UTC())
 	if err != nil {
 		return nil, fmt.Errorf("due reminders: query: %w", err)
@@ -130,20 +132,21 @@ type scannable interface {
 
 func scanReminder(row scannable) (*sessions.Reminder, error) {
 	var (
-		id, sessionID, userID, channelID, message string
-		fireAt, createdAt                         time.Time
+		id, sessionID, userID, channelID, message, agentPrompt string
+		fireAt, createdAt                                       time.Time
 	)
-	if err := row.Scan(&id, &sessionID, &userID, &channelID, &message, &fireAt, &createdAt); err != nil {
+	if err := row.Scan(&id, &sessionID, &userID, &channelID, &message, &fireAt, &createdAt, &agentPrompt); err != nil {
 		return nil, err
 	}
 	return &sessions.Reminder{
-		ID:        id,
-		SessionID: sessionID,
-		UserID:    userID,
-		ChannelID: types.ChannelID(channelID),
-		Message:   message,
-		FireAt:    fireAt,
-		CreatedAt: createdAt,
+		ID:          id,
+		SessionID:   sessionID,
+		UserID:      userID,
+		ChannelID:   types.ChannelID(channelID),
+		Message:     message,
+		FireAt:      fireAt,
+		CreatedAt:   createdAt,
+		AgentPrompt: agentPrompt,
 	}, nil
 }
 

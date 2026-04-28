@@ -12,13 +12,14 @@ var ErrReminderNotFound = errors.New("reminder not found")
 
 // Reminder represents a scheduled follow-up message for a user.
 type Reminder struct {
-	ID        string
-	UserID    string
-	SessionID string
-	ChannelID types.ChannelID
-	Message   string
-	FireAt    time.Time
-	CreatedAt time.Time
+	ID          string
+	UserID      string
+	SessionID   string
+	ChannelID   types.ChannelID
+	Message     string
+	FireAt      time.Time
+	CreatedAt   time.Time
+	AgentPrompt string // if non-empty, routed through the Comms Agent when firing
 }
 
 // ReminderStore persists and retrieves reminders.
