@@ -1,25 +1,25 @@
 # Agent OS
 
-A multi-agent AI personal assistant that routes requests to specialised agents — Comms, Builder, and Research — through a single entry point. Agents share session history, a persistent user profile, and a structured tool framework.
+A multi-agent AI personal assistant that routes requests to specialised agents — Comms, Builder, Research, and Reviewer — through a single entry point. Agents share session history, a persistent user profile, and a structured tool framework.
 
 ## Architecture
 
 ```
-Channels (Web · Discord)
-            │
-            ▼
-       Router / Classifier
-            │
-   ┌────────┼────────┐
-   ▼        ▼        ▼
-Comms    Builder  Research
-Agent     Agent    Agent
-   │        │        │
-   ▼        ▼        ▼
-Email   Code/File  WebSearch
-Calendar  Shell    WebFetch
-UserProfile Project
-Reminders  Load/List
+Channels (Web · Discord · WhatsApp)
+               │
+               ▼
+        Router / Classifier
+               │
+   ┌───────────┼───────────┐
+   ▼           ▼           ▼           ▼
+Comms       Builder     Research    Reviewer
+Agent        Agent       Agent       Agent
+   │           │           │           │
+   ▼           ▼           ▼           ▼
+Email       Code/File   WebSearch   Code/File
+Calendar      Shell     WebFetch      Shell
+UserProfile  Project
+Reminders   Load/List
 ```
 
 **Request flow:** channel receives message → router classifies intent → one or more agents run their agentic loop (LLM ↔ tools) → response merged and returned → session history persisted.
@@ -49,6 +49,10 @@ Reminders  Load/List
 | 19 | SQLite persistence — user profiles, projects, and reminders persist across restarts | Done |
 | 20 | Reminder tool — `reminder_set/cancel/list`, background worker fires due reminders | Done |
 | 21 | Docker — multi-stage `Dockerfile`, `docker-compose` with migration init container | Done |
+| 22 | WhatsApp channel — WA Web gateway, DM routing, allowed-JID allowlist | Done |
+| 23 | Dual email/calendar providers — Gmail + Outlook read in parallel; writes go to primary | Done |
+| 24 | Context-aware reminders — `agent_prompt` field runs a Comms Agent call at fire time | Done |
+| 25 | Reviewer Agent — code review workflow: reads workspace files, emits structured feedback | Done |
 
 ## Quick start
 
@@ -99,6 +103,17 @@ Copy `.env.example` to `.env` and fill in the values you need. Environment varia
 |---|---|---|---|
 | `BUILDER_SANDBOX_DIR` | No | `workspace` | Root directory for Builder Agent file and shell operations |
 
+### Agent models
+
+All model variables are optional. When unset, every agent defaults to `gemma4:26b`.
+
+| Variable | Agent | Description |
+|---|---|---|
+| `COMMS_MODEL` | Comms | Model used for email, calendar, and reminder tasks |
+| `BUILDER_MODEL` | Builder | Model used for code generation and project tasks |
+| `RESEARCH_MODEL` | Research | Model used for web search and synthesis |
+| `CLASSIFIER_MODEL` | Router | Model used to classify incoming message intent |
+
 ### Discord channel
 
 | Variable | Required | Description |
@@ -146,6 +161,23 @@ go run ./cmd/tool/microsoftauth/
 |---|---|---|
 | `MICROSOFT_CLIENT_ID` | For Microsoft | Azure app client ID |
 | `MICROSOFT_REFRESH_TOKEN` | For Microsoft | Long-lived refresh token (Outlook Mail + Calendar) |
+
+### WhatsApp channel
+
+WhatsApp uses the WA Web protocol via [whatsmeow](https://github.com/tulir/whatsmeow). Scan the QR code once on first run; the session is persisted automatically.
+
+```bash
+go run ./cmd/agentos/  # prints QR code to terminal on first run
+```
+
+See [docs/whatsapp-setup.md](docs/whatsapp-setup.md) for full setup instructions.
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `WHATSAPP_STORE_PATH` | For WhatsApp | `./data/whatsapp.db` | Path to the WhatsApp session database |
+| `WHATSAPP_ALLOWED_JID` | No | — | Comma-separated list of JIDs (phone numbers) allowed to send messages. Leave unset to allow all. |
+
+If `WHATSAPP_STORE_PATH` is absent the WhatsApp channel is disabled and only web/Discord channels are active.
 
 ## API
 
@@ -207,10 +239,12 @@ internal/
   channels/
     web/                — HTTP handler: /v1/chat, /v1/chat/stream, /healthz, /readyz
     discord/            — Discord gateway: DM + prefix routing, streaming edits
+    whatsapp/           — WhatsApp Web gateway: QR-code auth, DM routing, allowed-JID filter
   agents/
     comms/              — Comms Agent (email + calendar + reminders + user profile)
     builder/            — Builder Agent (requirements → spec → tasks → codegen → review)
     research/           — Research Agent (web search + synthesis)
+    reviewer/           — Reviewer Agent (code review: reads workspace, emits structured feedback)
   tools/
     loop.go             — agentic loop (Complete for tool steps, Stream for final reply)
     email/              — email_list/read/search/draft/send + Gmail/Outlook providers
@@ -225,9 +259,12 @@ internal/
 migrations/
   001_initial_schema.sql
   002_reminders_created_at.sql
+  003_reminders_agent_prompt.sql
 docs/
   email-setup.md
   calendar-setup.md
 test/
   integration/          — full HTTP stack tests with mocked LLM and providers
+    harness_test.go     — scriptedLLM, mock providers, newStack() helper
+    phase3_test.go      — Phase 3 feature tests (WhatsApp, dual providers, reminders, Reviewer, Builder)
 ```
