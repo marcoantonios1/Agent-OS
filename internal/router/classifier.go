@@ -85,8 +85,7 @@ The valid intent values are:
                          "Which database is better for time-series data?",
                          "Search for recent papers on LLMs"
 
-- "unknown"  – The message is ambiguous, off-topic, or cannot be reliably
-               classified into any of the above categories.
+- "unknown"  – it is sent to the comms agent by default, which can handle general conversation and fallback responses.
 
 ## Compound requests
 If the user asks for multiple distinct tasks that belong to different agents,
