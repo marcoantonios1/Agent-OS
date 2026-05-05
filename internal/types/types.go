@@ -72,14 +72,32 @@ type ToolCall struct {
 	Arguments string
 }
 
+// ContentPart is one element of a multi-part message (text, image, or document).
+// Used in ConversationTurn.Parts for vision / attachment turns.
+type ContentPart struct {
+	// Type is "text", "image", or "document".
+	Type string
+	// Text holds the content when Type == "text".
+	Text string
+	// ImageData holds base64-encoded bytes when Type == "image" or "document".
+	ImageData string
+	// MimeType is the media type, e.g. "image/jpeg", "image/png", "application/pdf".
+	MimeType string
+	// Filename is an optional display name shown to the LLM for context.
+	Filename string
+}
+
 // ConversationTurn represents a single exchange in a conversation history.
 // Role may be "system", "user", "assistant", or "tool".
 type ConversationTurn struct {
 	// Role is "system", "user", "assistant", or "tool".
 	Role string
-	// Content is the text of the turn. Empty for assistant turns that only
-	// contain tool calls.
+	// Content is the text of the turn. Kept for backward compatibility — used
+	// when Parts is nil. Empty for assistant turns that only contain tool calls.
 	Content string
+	// Parts holds multi-part content (text + images/documents). When non-nil,
+	// Content is ignored and Parts drives the wire format.
+	Parts []ContentPart
 	// ToolCalls is populated for assistant turns that request tool calls.
 	ToolCalls []ToolCall
 	// ToolCallID ties a tool-role turn back to the ToolCall it is responding to.

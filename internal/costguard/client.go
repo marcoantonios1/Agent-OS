@@ -72,11 +72,28 @@ func (c *Client) Ping(ctx context.Context) error {
 // ── OpenAI wire types ─────────────────────────────────────────────────────────
 
 type oaiRequest struct {
-	Model     string       `json:"model"`
-	Messages  []oaiMessage `json:"messages"`
-	Tools     []oaiTool    `json:"tools,omitempty"`
-	MaxTokens int          `json:"max_tokens,omitempty"`
-	Stream    bool         `json:"stream,omitempty"`
+	Model     string            `json:"model"`
+	Messages  []json.RawMessage `json:"messages"`
+	Tools     []oaiTool         `json:"tools,omitempty"`
+	MaxTokens int               `json:"max_tokens,omitempty"`
+	Stream    bool              `json:"stream,omitempty"`
+}
+
+// oaiContentPart covers both text and image_url parts in the vision content array.
+type oaiContentPart struct {
+	Type     string       `json:"type"`
+	Text     string       `json:"text,omitempty"`
+	ImageURL *oaiImageURL `json:"image_url,omitempty"`
+}
+
+type oaiImageURL struct {
+	URL string `json:"url"`
+}
+
+// oaiMessageParts is the wire shape for multimodal (vision) turns.
+type oaiMessageParts struct {
+	Role    string           `json:"role"`
+	Content []oaiContentPart `json:"content"`
 }
 
 // oaiMessage uses a pointer for Content so assistant turns with only tool_calls
@@ -282,7 +299,7 @@ func (c *Client) Stream(ctx context.Context, req CompletionRequest) (<-chan Stre
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func (c *Client) buildRequest(req CompletionRequest, stream bool) oaiRequest {
-	msgs := make([]oaiMessage, 0, len(req.Messages))
+	msgs := make([]json.RawMessage, 0, len(req.Messages))
 	for _, m := range req.Messages {
 		msgs = append(msgs, toOAIMessage(m))
 	}
@@ -308,9 +325,27 @@ func (c *Client) buildRequest(req CompletionRequest, stream bool) oaiRequest {
 	}
 }
 
-func toOAIMessage(t types.ConversationTurn) oaiMessage {
-	msg := oaiMessage{Role: t.Role}
+func toOAIMessage(t types.ConversationTurn) json.RawMessage {
+	// Multimodal path: emit OpenAI vision content array.
+	if len(t.Parts) > 0 {
+		parts := make([]oaiContentPart, 0, len(t.Parts))
+		for _, p := range t.Parts {
+			switch p.Type {
+			case "text":
+				parts = append(parts, oaiContentPart{Type: "text", Text: p.Text})
+			case "image", "document":
+				parts = append(parts, oaiContentPart{
+					Type:     "image_url",
+					ImageURL: &oaiImageURL{URL: fmt.Sprintf("data:%s;base64,%s", p.MimeType, p.ImageData)},
+				})
+			}
+		}
+		raw, _ := json.Marshal(oaiMessageParts{Role: t.Role, Content: parts})
+		return raw
+	}
 
+	// Text-only path: existing string-content format.
+	msg := oaiMessage{Role: t.Role}
 	switch t.Role {
 	case "assistant":
 		if len(t.ToolCalls) > 0 {
@@ -336,8 +371,8 @@ func toOAIMessage(t types.ConversationTurn) oaiMessage {
 		// system, user
 		msg.Content = &t.Content
 	}
-
-	return msg
+	raw, _ := json.Marshal(msg)
+	return raw
 }
 
 func (c *Client) doPost(ctx context.Context, path string, body oaiRequest) (*http.Response, error) {
