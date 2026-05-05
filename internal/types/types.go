@@ -46,6 +46,10 @@ type InboundMessage struct {
 	Timestamp time.Time
 	// Metadata holds arbitrary channel-specific key/value pairs.
 	Metadata map[string]string
+	// Parts holds multi-part content when the message includes attachments
+	// (images, PDFs). When non-nil, the LLM receives multimodal content.
+	// The text turn is always included as the first part by the channel handler.
+	Parts []ContentPart
 }
 
 // OutboundMessage represents a message to be delivered to a user via a channel.

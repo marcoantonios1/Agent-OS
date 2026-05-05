@@ -4,13 +4,16 @@ package web
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/marcoantonios1/Agent-OS/internal/attachments"
 	"github.com/marcoantonios1/Agent-OS/internal/observability"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
@@ -46,11 +49,33 @@ type ReadinessChecker interface {
 	Ping(ctx context.Context) error
 }
 
-// chatRequest is the JSON body for POST /v1/chat.
+const (
+	maxAttachments = 5
+	maxImageBytes  = 5 * 1024 * 1024 // 5 MB decoded
+)
+
+// allowedMimeTypes lists the attachment types the web channel accepts.
+var allowedMimeTypes = map[string]bool{
+	"image/jpeg":      true,
+	"image/png":       true,
+	"image/webp":      true,
+	"image/gif":       true,
+	"application/pdf": true,
+}
+
+// attachmentRequest is one element of the optional attachments array.
+type attachmentRequest struct {
+	Data     string `json:"data"`      // base64-encoded file bytes
+	MimeType string `json:"mime_type"` // must be in allowedMimeTypes
+	Filename string `json:"filename"`  // optional display name
+}
+
+// chatRequest is the JSON body for POST /v1/chat and POST /v1/chat/stream.
 type chatRequest struct {
-	SessionID string `json:"session_id"`
-	UserID    string `json:"user_id"`
-	Text      string `json:"text"`
+	SessionID   string              `json:"session_id"`
+	UserID      string              `json:"user_id"`
+	Text        string              `json:"text"`
+	Attachments []attachmentRequest `json:"attachments,omitempty"`
 }
 
 // chatResponse is the JSON body returned by POST /v1/chat.
@@ -111,6 +136,16 @@ func (h *Handler) chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var msgParts []types.ContentPart
+	if len(req.Attachments) > 0 {
+		attParts, err := parseAttachments(req.Attachments)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		msgParts = buildMsgParts(req.Text, attParts)
+	}
+
 	start := time.Now()
 	msg := types.InboundMessage{
 		ID:        reqIDFromCtx(r.Context()),
@@ -119,12 +154,14 @@ func (h *Handler) chat(w http.ResponseWriter, r *http.Request) {
 		SessionID: req.SessionID,
 		Text:      req.Text,
 		Timestamp: start,
+		Parts:     msgParts,
 	}
 
 	h.log.InfoContext(r.Context(), "channel_received",
 		"session_id", req.SessionID,
 		"user_id", req.UserID,
 		"text_length", len(req.Text),
+		"attachments", len(req.Attachments),
 		"channel", "web",
 	)
 
@@ -176,6 +213,16 @@ func (h *Handler) chatStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
+	var msgParts []types.ContentPart
+	if len(req.Attachments) > 0 {
+		attParts, err := parseAttachments(req.Attachments)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		msgParts = buildMsgParts(req.Text, attParts)
+	}
+
 	start := time.Now()
 	msg := types.InboundMessage{
 		ID:        reqIDFromCtx(r.Context()),
@@ -184,11 +231,13 @@ func (h *Handler) chatStream(w http.ResponseWriter, r *http.Request) {
 		SessionID: req.SessionID,
 		Text:      req.Text,
 		Timestamp: start,
+		Parts:     msgParts,
 	}
 
 	h.log.InfoContext(r.Context(), "channel_received",
 		"session_id", req.SessionID, "user_id", req.UserID,
-		"text_length", len(req.Text), "channel", "web-stream")
+		"text_length", len(req.Text), "attachments", len(req.Attachments),
+		"channel", "web-stream")
 
 	chunks, err := sd.RouteStream(r.Context(), msg)
 	if err != nil {
@@ -283,6 +332,72 @@ func recovery(next http.Handler) http.Handler {
 		}()
 		next.ServeHTTP(w, r)
 	})
+}
+
+// --- attachment processing ---
+
+// parseAttachments validates and converts a slice of attachmentRequests into
+// ContentParts ready to be threaded into a ConversationTurn.
+// For images the decoded bytes are size-checked and the original base64 string
+// is forwarded (the LLM client re-encodes it into the data URI).
+// For PDFs the bytes are decoded and text is extracted via ExtractPDFText.
+func parseAttachments(atts []attachmentRequest) ([]types.ContentPart, error) {
+	if len(atts) > maxAttachments {
+		return nil, fmt.Errorf("too many attachments: max %d per request", maxAttachments)
+	}
+
+	parts := make([]types.ContentPart, 0, len(atts))
+	for _, att := range atts {
+		if !allowedMimeTypes[att.MimeType] {
+			return nil, fmt.Errorf("unsupported attachment type: %s", att.MimeType)
+		}
+
+		decoded, err := base64.StdEncoding.DecodeString(att.Data)
+		if err != nil {
+			return nil, fmt.Errorf("attachment %q: data is not valid base64", att.Filename)
+		}
+
+		switch {
+		case strings.HasPrefix(att.MimeType, "image/"):
+			if len(decoded) > maxImageBytes {
+				return nil, fmt.Errorf("image %q exceeds the %d MB size limit",
+					att.Filename, maxImageBytes/(1024*1024))
+			}
+			parts = append(parts, types.ContentPart{
+				Type:      "image",
+				ImageData: att.Data, // keep original base64 — client wraps it in a data URI
+				MimeType:  att.MimeType,
+				Filename:  att.Filename,
+			})
+
+		case att.MimeType == "application/pdf":
+			text, err := attachments.ExtractPDFText(decoded)
+			if err != nil {
+				name := att.Filename
+				if name == "" {
+					name = "attachment"
+				}
+				return nil, fmt.Errorf("PDF %q: %w", name, err)
+			}
+			parts = append(parts, types.ContentPart{
+				Type:     "text",
+				Text:     text,
+				Filename: att.Filename,
+			})
+		}
+	}
+	return parts, nil
+}
+
+// buildMsgParts returns the Parts slice for an InboundMessage when attachments
+// are present. The user's text is prepended as the first part so the LLM
+// always sees the question alongside the attachment content.
+func buildMsgParts(text string, attParts []types.ContentPart) []types.ContentPart {
+	parts := make([]types.ContentPart, 0, 1+len(attParts))
+	if text != "" {
+		parts = append(parts, types.ContentPart{Type: "text", Text: text})
+	}
+	return append(parts, attParts...)
 }
 
 // --- helpers ---

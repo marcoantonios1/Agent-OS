@@ -99,6 +99,7 @@ func (r *Router) Route(ctx context.Context, msg types.InboundMessage) (types.Out
 	history := append(sess.History, types.ConversationTurn{ //nolint:gocritic — intentional copy-append
 		Role:    "user",
 		Content: msg.Text,
+		Parts:   msg.Parts,
 	})
 
 	// 4. Classify — returns an ordered []Intent (one or more).
@@ -322,6 +323,7 @@ func (r *Router) RouteStream(ctx context.Context, msg types.InboundMessage) (<-c
 	history := append(sess.History, types.ConversationTurn{ //nolint:gocritic
 		Role:    "user",
 		Content: msg.Text,
+		Parts:   msg.Parts,
 	})
 
 	intents, classifyErr := r.Classifier.Classify(ctx, msg.SessionID, msg.Text, history)
