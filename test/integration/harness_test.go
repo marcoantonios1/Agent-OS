@@ -212,6 +212,7 @@ type testStack struct {
 	llm          *scriptedLLM
 	emailProv    *mockEmailProvider
 	projectStore *memory.ProjectStore
+	router       *router.Router // exposed for tests that route non-HTTP channels directly
 }
 
 // stackConfig configures what providers the stack includes.
@@ -286,6 +287,7 @@ func newStack(cfg stackConfig) *testStack {
 		llm:          llm,
 		emailProv:    cfg.emailProv,
 		projectStore: projectStore,
+		router:       r,
 	}
 }
 
