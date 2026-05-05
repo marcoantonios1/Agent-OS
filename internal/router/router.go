@@ -103,7 +103,7 @@ func (r *Router) Route(ctx context.Context, msg types.InboundMessage) (types.Out
 	})
 
 	// 4. Classify — returns an ordered []Intent (one or more).
-	intents, classifyErr := r.Classifier.Classify(ctx, msg.SessionID, msg.Text, history)
+	intents, classifyErr := r.Classifier.Classify(ctx, msg.SessionID, classifyInput(msg), history)
 	if classifyErr != nil {
 		r.log.WarnContext(ctx, "classifier error, defaulting to unknown",
 			"session_id", msg.SessionID, "error", classifyErr)
@@ -196,7 +196,8 @@ func (r *Router) dispatchAll(
 	}
 
 	if len(valid) == 0 {
-		return types.AgentResponse{Output: unknownIntentReply}, nil
+		// System prompt says "unknown is sent to comms by default"; honour that.
+		return r.dispatch(ctx, msg, IntentComms, history, sessionMeta)
 	}
 
 	// Single intent: preserve existing behaviour, including error propagation.
@@ -326,7 +327,7 @@ func (r *Router) RouteStream(ctx context.Context, msg types.InboundMessage) (<-c
 		Parts:   msg.Parts,
 	})
 
-	intents, classifyErr := r.Classifier.Classify(ctx, msg.SessionID, msg.Text, history)
+	intents, classifyErr := r.Classifier.Classify(ctx, msg.SessionID, classifyInput(msg), history)
 	if classifyErr != nil {
 		r.log.WarnContext(ctx, "classifier error, defaulting to unknown",
 			"session_id", msg.SessionID, "error", classifyErr)
@@ -344,7 +345,11 @@ func (r *Router) RouteStream(ctx context.Context, msg types.InboundMessage) (<-c
 
 	switch {
 	case len(valid) == 0:
-		rawCh = singleChunk(unknownIntentReply)
+		// System prompt says "unknown is sent to comms by default"; honour that.
+		rawCh, err = r.streamDispatch(ctx, msg, IntentComms, history, sess.Metadata)
+		if err != nil {
+			return nil, fmt.Errorf("router: stream dispatch: %w", err)
+		}
 	case len(valid) == 1:
 		rawCh, err = r.streamDispatch(ctx, msg, valid[0], history, sess.Metadata)
 		if err != nil {
@@ -454,6 +459,30 @@ func validIntents(intents []Intent) []Intent {
 		}
 	}
 	return out
+}
+
+// classifyInput returns the text to present to the intent classifier.
+// For plain text messages it is msg.Text. For media-only messages it
+// derives a short description so the classifier can route meaningfully:
+//   - PDF documents: use the extracted text (full content for classification)
+//   - Images:        substitute "[image]" so the comms fallback applies
+func classifyInput(msg types.InboundMessage) string {
+	if msg.Text != "" {
+		return msg.Text
+	}
+	// PDF part: extracted text is stored as Type=="text" with a Filename set.
+	for _, p := range msg.Parts {
+		if p.Type == "text" && p.Text != "" {
+			return p.Text
+		}
+	}
+	// Image part: no textual content available.
+	for _, p := range msg.Parts {
+		if p.Type == "image" {
+			return "[image]"
+		}
+	}
+	return ""
 }
 
 // singleChunk returns a pre-closed channel containing one string value.
