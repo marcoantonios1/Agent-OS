@@ -503,3 +503,106 @@ func TestRoute_CompoundIntent_AllUnknown_ReturnsFallback(t *testing.T) {
 		t.Error("expected fallback reply, got empty string")
 	}
 }
+
+// ── classifyInput ─────────────────────────────────────────────────────────────
+
+func TestClassifyInput_PlainText(t *testing.T) {
+	msg := types.InboundMessage{Text: "hello"}
+	if got := classifyInput(msg); got != "hello" {
+		t.Errorf("got %q, want %q", got, "hello")
+	}
+}
+
+func TestClassifyInput_TextTakesPrecedenceOverParts(t *testing.T) {
+	msg := types.InboundMessage{
+		Text:  "describe this",
+		Parts: []types.ContentPart{{Type: "image", ImageData: "abc"}},
+	}
+	if got := classifyInput(msg); got != "describe this" {
+		t.Errorf("got %q, want %q", got, "describe this")
+	}
+}
+
+func TestClassifyInput_ImageOnly(t *testing.T) {
+	msg := types.InboundMessage{
+		Parts: []types.ContentPart{{Type: "image", ImageData: "abc", MimeType: "image/jpeg"}},
+	}
+	if got := classifyInput(msg); got != "[image]" {
+		t.Errorf("got %q, want %q", got, "[image]")
+	}
+}
+
+func TestClassifyInput_PDFOnly(t *testing.T) {
+	msg := types.InboundMessage{
+		Parts: []types.ContentPart{{Type: "text", Text: "Invoice total: $500", Filename: "invoice.pdf"}},
+	}
+	if got := classifyInput(msg); got != "Invoice total: $500" {
+		t.Errorf("got %q, want %q", got, "Invoice total: $500")
+	}
+}
+
+func TestClassifyInput_NoParts(t *testing.T) {
+	if got := classifyInput(types.InboundMessage{}); got != "" {
+		t.Errorf("got %q, want empty", got)
+	}
+}
+
+// ── unknown → comms routing ───────────────────────────────────────────────────
+
+func TestRoute_UnknownIntent_RoutesToComms(t *testing.T) {
+	store := memory.NewStore()
+	comms := &stubAgent{output: "Hi! How can I help?"}
+	r := New(
+		newStubClassifier(IntentUnknown),
+		map[Intent]Agent{IntentComms: comms},
+		store,
+		approval.NewMemoryStore(),
+	)
+
+	out, err := r.Route(context.Background(), newMsg("sess-img", "user-1", ""))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Text != "Hi! How can I help?" {
+		t.Errorf("unknown should have routed to comms, got %q", out.Text)
+	}
+	if len(comms.calls) != 1 {
+		t.Errorf("expected comms agent called once, got %d", len(comms.calls))
+	}
+}
+
+func TestRoute_ImageMessage_RoutesToComms(t *testing.T) {
+	store := memory.NewStore()
+	comms := &stubAgent{output: "That looks like a cat!"}
+	r := New(
+		// Classifier sees "[image]" and returns unknown — comms handles it.
+		newStubClassifier(IntentUnknown),
+		map[Intent]Agent{IntentComms: comms},
+		store,
+		approval.NewMemoryStore(),
+	)
+
+	msg := types.InboundMessage{
+		ID:        "img-1",
+		ChannelID: types.ChannelID("whatsapp"),
+		UserID:    "user-1",
+		SessionID: "sess-img2",
+		Timestamp: time.Now(),
+		Parts:     []types.ContentPart{{Type: "image", ImageData: "abc", MimeType: "image/jpeg"}},
+	}
+	out, err := r.Route(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Text != "That looks like a cat!" {
+		t.Errorf("image message should route to comms, got %q", out.Text)
+	}
+	// Comms agent should have the image in its history.
+	if len(comms.calls) != 1 {
+		t.Fatalf("expected 1 call to comms, got %d", len(comms.calls))
+	}
+	lastTurn := comms.calls[0].History[len(comms.calls[0].History)-1]
+	if len(lastTurn.Parts) != 1 || lastTurn.Parts[0].Type != "image" {
+		t.Errorf("comms agent should have received image in history, got %+v", lastTurn.Parts)
+	}
+}
