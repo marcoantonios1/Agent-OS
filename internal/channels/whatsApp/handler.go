@@ -9,6 +9,8 @@ package whatsapp
 
 import (
 	"context"
+	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -24,15 +26,24 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 	_ "modernc.org/sqlite" // registers the "sqlite" driver; safe to import in multiple packages
 
+	"github.com/marcoantonios1/Agent-OS/internal/attachments"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
 	agenttypes "github.com/marcoantonios1/Agent-OS/internal/types"
 )
+
+var errUnsupportedMediaType = errors.New("unsupported media type")
+
+// mediaDownloader abstracts whatsmeow.Client.DownloadAny for testing.
+type mediaDownloader interface {
+	DownloadAny(ctx context.Context, msg *waE2E.Message) ([]byte, error)
+}
 
 // Handler listens for WhatsApp messages and routes them through the shared
 // Dispatcher. Only messages from allowedJID are processed; all others are
 // silently dropped.
 type Handler struct {
 	client     *whatsmeow.Client
+	downloader mediaDownloader // defaults to client; overridden in tests
 	dispatcher web.Dispatcher
 	allowedJID string // only respond to this JID; validated non-empty by New
 	log        *slog.Logger
@@ -64,6 +75,7 @@ func New(dispatcher web.Dispatcher, storePath, allowedJID string) (*Handler, err
 
 	h := &Handler{
 		client:     client,
+		downloader: client,
 		dispatcher: dispatcher,
 		allowedJID: allowedJID,
 		log:        slog.Default(),
@@ -138,11 +150,14 @@ func (h *Handler) onMessage(evt *events.Message) {
 		return
 	}
 
+	ctx := context.Background()
+	chat := evt.Info.Chat
+
 	senderJID := normaliseJID(evt.Info.Sender)
 	// WhatsApp now delivers messages with LID (@lid) JIDs instead of phone JIDs.
 	// Resolve to the canonical phone JID before checking the allowlist.
 	if evt.Info.Sender.Server == watypes.HiddenUserServer {
-		if pn, err := h.client.Store.GetAltJID(context.Background(), evt.Info.Sender.ToNonAD()); err == nil && !pn.IsEmpty() {
+		if pn, err := h.client.Store.GetAltJID(ctx, evt.Info.Sender.ToNonAD()); err == nil && !pn.IsEmpty() {
 			senderJID = pn.String()
 		}
 	}
@@ -152,11 +167,17 @@ func (h *Handler) onMessage(evt *events.Message) {
 	}
 
 	text := extractText(evt.Message)
-	if text == "" {
-		return // media, sticker, reaction, etc. — silently ignore
+
+	attParts, err := h.processMedia(ctx, evt.Message)
+	if errors.Is(err, errUnsupportedMediaType) {
+		h.send(ctx, chat, "I can read images and PDFs — other file types aren't supported yet") //nolint:errcheck
+		return
 	}
 
-	ctx := context.Background()
+	if text == "" && len(attParts) == 0 {
+		return // sticker, reaction, etc. — silently ignore
+	}
+
 	sid := sessionKey(senderJID)
 
 	h.log.InfoContext(ctx, "channel_received",
@@ -173,9 +194,10 @@ func (h *Handler) onMessage(evt *events.Message) {
 		SessionID: sid,
 		Text:      text,
 		Timestamp: start,
+		Parts:     buildMsgParts(text, attParts),
 	}
 
-	h.routeAndRespond(ctx, evt.Info.Chat, inbound, sid, start)
+	h.routeAndRespond(ctx, chat, inbound, sid, start)
 }
 
 // routeAndRespond dispatches inbound via RouteStream when the dispatcher
@@ -287,6 +309,74 @@ func extractText(msg *waE2E.Message) string {
 		return ext.GetText()
 	}
 	return ""
+}
+
+// processMedia detects image and document sub-messages, downloads the encrypted
+// media via whatsmeow, and returns ContentParts ready for the LLM.
+// Returns (nil, errUnsupportedMediaType) for recognised-but-unsupported doc
+// formats; the caller is responsible for sending the user a reply in that case.
+// Download errors are logged and treated as "no media" so text still routes.
+func (h *Handler) processMedia(ctx context.Context, msg *waE2E.Message) ([]agenttypes.ContentPart, error) {
+	if msg == nil {
+		return nil, nil
+	}
+
+	if img := msg.GetImageMessage(); img != nil {
+		data, err := h.downloader.DownloadAny(ctx, msg)
+		if err != nil {
+			h.logger().WarnContext(ctx, "whatsapp: image download failed", "error", err)
+			return nil, nil
+		}
+		mime := img.GetMimetype()
+		if mime == "" {
+			mime = "image/jpeg"
+		}
+		return []agenttypes.ContentPart{{
+			Type:      "image",
+			ImageData: base64.StdEncoding.EncodeToString(data),
+			MimeType:  mime,
+		}}, nil
+	}
+
+	if doc := msg.GetDocumentMessage(); doc != nil {
+		if doc.GetMimetype() != "application/pdf" {
+			return nil, errUnsupportedMediaType
+		}
+		data, err := h.downloader.DownloadAny(ctx, msg)
+		if err != nil {
+			h.logger().WarnContext(ctx, "whatsapp: PDF download failed", "error", err)
+			return nil, nil
+		}
+		text, err := attachments.ExtractPDFText(data)
+		if err != nil {
+			h.logger().WarnContext(ctx, "whatsapp: PDF extraction failed", "error", err)
+			return nil, errUnsupportedMediaType
+		}
+		filename := doc.GetFileName()
+		if filename == "" {
+			filename = "document.pdf"
+		}
+		return []agenttypes.ContentPart{{
+			Type:     "text",
+			Text:     text,
+			Filename: filename,
+		}}, nil
+	}
+
+	return nil, nil
+}
+
+// buildMsgParts prepends a text part when text is non-empty and returns nil
+// when there are no attachment parts (text-only messages don't need Parts set).
+func buildMsgParts(text string, attParts []agenttypes.ContentPart) []agenttypes.ContentPart {
+	if len(attParts) == 0 {
+		return nil
+	}
+	parts := make([]agenttypes.ContentPart, 0, 1+len(attParts))
+	if text != "" {
+		parts = append(parts, agenttypes.ContentPart{Type: "text", Text: text})
+	}
+	return append(parts, attParts...)
 }
 
 func strPtr(s string) *string { return &s }
