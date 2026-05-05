@@ -1,8 +1,17 @@
 package discord
 
 import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/bwmarrin/discordgo"
 )
 
 // ── sessionKey ────────────────────────────────────────────────────────────────
@@ -249,5 +258,267 @@ func TestSplitMessage_PreservesNewlines(t *testing.T) {
 	chunks := splitMessage(text, 2000)
 	if len(chunks) < 2 {
 		t.Errorf("expected 2+ chunks, got %d", len(chunks))
+	}
+}
+
+// ── passesFilter ──────────────────────────────────────────────────────────────
+
+func TestPassesFilter_DM_AlwaysTrue(t *testing.T) {
+	if !passesFilter("", "bot1", "!ai", true) {
+		t.Error("DM should always pass the filter")
+	}
+}
+
+func TestPassesFilter_NoPrefix_AlwaysTrue(t *testing.T) {
+	if !passesFilter("hello", "bot1", "", false) {
+		t.Error("guild channel with no prefix should always pass")
+	}
+}
+
+func TestPassesFilter_Guild_WithPrefix_Matches(t *testing.T) {
+	if !passesFilter("!ai describe this", "bot1", "!ai", false) {
+		t.Error("message starting with prefix should pass")
+	}
+}
+
+func TestPassesFilter_Guild_WithMention_Passes(t *testing.T) {
+	if !passesFilter("<@bot1> describe this", "bot1", "!ai", false) {
+		t.Error("message with @mention should pass even without prefix")
+	}
+}
+
+func TestPassesFilter_Guild_NoMatchFails(t *testing.T) {
+	if passesFilter("just chatting", "bot1", "!ai", false) {
+		t.Error("message without prefix or mention should not pass")
+	}
+}
+
+func TestPassesFilter_Guild_EmptyText_NoPrefix_Passes(t *testing.T) {
+	// Attachment-only message in a channel with no prefix configured.
+	if !passesFilter("", "bot1", "", false) {
+		t.Error("empty text with no prefix should pass (attachment-only message)")
+	}
+}
+
+// ── fetchAttachments helpers ──────────────────────────────────────────────────
+
+// newAttachmentHandler returns a Handler wired to a custom HTTP client,
+// suitable for unit-testing fetchAttachments without a real Discord session.
+func newAttachmentHandler(client *http.Client) *Handler {
+	return &Handler{log: slog.Default(), httpClient: client}
+}
+
+// buildDiscordPDF creates a minimal valid single-page text PDF for tests.
+func buildDiscordPDF(pageText string) []byte {
+	var buf bytes.Buffer
+	write := func(s string) { buf.WriteString(s) }
+	write("%PDF-1.4\n")
+
+	stream := fmt.Sprintf("BT /F1 12 Tf 72 720 Td (%s) Tj ET\n", pageText)
+	offsets := make([]int, 0, 5)
+
+	offsets = append(offsets, buf.Len())
+	write("1 0 obj\n<</Type /Catalog /Pages 2 0 R>>\nendobj\n")
+
+	offsets = append(offsets, buf.Len())
+	write("2 0 obj\n<</Type /Pages /Kids [3 0 R] /Count 1>>\nendobj\n")
+
+	offsets = append(offsets, buf.Len())
+	write(fmt.Sprintf("3 0 obj\n<</Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]"+
+		" /Contents 4 0 R /Resources <</Font <</F1 5 0 R>>>>>>\nendobj\n"))
+
+	offsets = append(offsets, buf.Len())
+	write(fmt.Sprintf("4 0 obj\n<</Length %d>>\nstream\n%sendstream\nendobj\n",
+		len(stream), stream))
+
+	offsets = append(offsets, buf.Len())
+	write("5 0 obj\n<</Type /Font /Subtype /Type1 /BaseFont /Helvetica>>\nendobj\n")
+
+	xrefPos := buf.Len()
+	nObjs := len(offsets) + 1
+	write(fmt.Sprintf("xref\n0 %d\n", nObjs))
+	write("0000000000 65535 f \n")
+	for _, off := range offsets {
+		write(fmt.Sprintf("%010d 00000 n \n", off))
+	}
+	write(fmt.Sprintf("trailer\n<</Size %d /Root 1 0 R>>\nstartxref\n%d\n", nObjs, xrefPos))
+	write("%%EOF\n")
+	return buf.Bytes()
+}
+
+// ── fetchAttachments tests ────────────────────────────────────────────────────
+
+func TestFetchAttachments_Image(t *testing.T) {
+	imgBytes := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a} // PNG-ish header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(imgBytes) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	h := newAttachmentHandler(srv.Client())
+	atts := []*discordgo.MessageAttachment{
+		{URL: srv.URL + "/img.png", Filename: "img.png", ContentType: "image/png"},
+	}
+
+	parts := h.fetchAttachments(context.Background(), atts)
+
+	if len(parts) != 1 {
+		t.Fatalf("got %d parts, want 1", len(parts))
+	}
+	p := parts[0]
+	if p.Type != "image" {
+		t.Errorf("type = %q, want image", p.Type)
+	}
+	if p.MimeType != "image/png" {
+		t.Errorf("mime = %q, want image/png", p.MimeType)
+	}
+	if p.Filename != "img.png" {
+		t.Errorf("filename = %q, want img.png", p.Filename)
+	}
+	if want := base64.StdEncoding.EncodeToString(imgBytes); p.ImageData != want {
+		t.Error("ImageData does not match base64-encoded bytes")
+	}
+}
+
+func TestFetchAttachments_PDF(t *testing.T) {
+	pdfBytes := buildDiscordPDF("Invoice total 250")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/pdf")
+		w.Write(pdfBytes) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	h := newAttachmentHandler(srv.Client())
+	atts := []*discordgo.MessageAttachment{
+		{URL: srv.URL + "/inv.pdf", Filename: "inv.pdf", ContentType: "application/pdf"},
+	}
+
+	parts := h.fetchAttachments(context.Background(), atts)
+
+	if len(parts) != 1 {
+		t.Fatalf("got %d parts, want 1", len(parts))
+	}
+	p := parts[0]
+	if p.Type != "text" {
+		t.Errorf("type = %q, want text", p.Type)
+	}
+	if !strings.Contains(p.Text, "Invoice total 250") {
+		t.Errorf("extracted text %q missing expected content", p.Text)
+	}
+	if p.Filename != "inv.pdf" {
+		t.Errorf("filename = %q, want inv.pdf", p.Filename)
+	}
+}
+
+func TestFetchAttachments_UnsupportedType_Ignored(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("zip data")) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	h := newAttachmentHandler(srv.Client())
+	atts := []*discordgo.MessageAttachment{
+		{URL: srv.URL + "/archive.zip", Filename: "archive.zip", ContentType: "application/zip"},
+	}
+
+	parts := h.fetchAttachments(context.Background(), atts)
+	if len(parts) != 0 {
+		t.Errorf("got %d parts, want 0 (unsupported type should be silently ignored)", len(parts))
+	}
+}
+
+func TestFetchAttachments_ContentTypeWithCharset(t *testing.T) {
+	imgBytes := []byte{0xFF, 0xD8} // JPEG magic bytes
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(imgBytes) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	h := newAttachmentHandler(srv.Client())
+	// Discord occasionally sends charset parameters alongside the MIME type.
+	atts := []*discordgo.MessageAttachment{
+		{URL: srv.URL + "/photo.jpg", Filename: "photo.jpg", ContentType: "image/jpeg; charset=binary"},
+	}
+
+	parts := h.fetchAttachments(context.Background(), atts)
+	if len(parts) != 1 {
+		t.Fatalf("got %d parts, want 1 (charset param should be stripped)", len(parts))
+	}
+	if parts[0].MimeType != "image/jpeg" {
+		t.Errorf("mime = %q, want image/jpeg", parts[0].MimeType)
+	}
+}
+
+func TestFetchAttachments_FallbackMimeFromExtension(t *testing.T) {
+	imgBytes := []byte{0x89, 0x50, 0x4e, 0x47}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(imgBytes) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	h := newAttachmentHandler(srv.Client())
+	// ContentType is empty — handler should infer from ".png" extension.
+	atts := []*discordgo.MessageAttachment{
+		{URL: srv.URL + "/screenshot.png", Filename: "screenshot.png", ContentType: ""},
+	}
+
+	parts := h.fetchAttachments(context.Background(), atts)
+	if len(parts) != 1 {
+		t.Fatalf("got %d parts, want 1 (MIME inferred from extension)", len(parts))
+	}
+	if parts[0].MimeType != "image/png" {
+		t.Errorf("mime = %q, want image/png", parts[0].MimeType)
+	}
+}
+
+func TestFetchAttachments_MaxFiveProcessed(t *testing.T) {
+	imgBytes := []byte{0xFF, 0xD8}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(imgBytes) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	h := newAttachmentHandler(srv.Client())
+	atts := make([]*discordgo.MessageAttachment, 7)
+	for i := range atts {
+		atts[i] = &discordgo.MessageAttachment{
+			URL:         srv.URL + fmt.Sprintf("/img%d.jpg", i),
+			Filename:    fmt.Sprintf("img%d.jpg", i),
+			ContentType: "image/jpeg",
+		}
+	}
+
+	parts := h.fetchAttachments(context.Background(), atts)
+	if len(parts) != maxDiscordAttachments {
+		t.Errorf("got %d parts, want %d (max cap)", len(parts), maxDiscordAttachments)
+	}
+}
+
+func TestFetchAttachments_HTTPError_Skipped(t *testing.T) {
+	// Server immediately closes — triggers a connection error.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hj, _ := w.(http.Hijacker)
+		conn, _, _ := hj.Hijack()
+		conn.Close()
+	}))
+	defer srv.Close()
+
+	h := newAttachmentHandler(srv.Client())
+	atts := []*discordgo.MessageAttachment{
+		{URL: srv.URL + "/img.png", Filename: "img.png", ContentType: "image/png"},
+	}
+
+	// Should not panic; the attachment is simply skipped.
+	parts := h.fetchAttachments(context.Background(), atts)
+	if len(parts) != 0 {
+		t.Errorf("got %d parts, want 0 after HTTP error", len(parts))
+	}
+}
+
+func TestFetchAttachments_Empty(t *testing.T) {
+	h := newAttachmentHandler(http.DefaultClient)
+	if parts := h.fetchAttachments(context.Background(), nil); parts != nil {
+		t.Errorf("nil attachments should return nil, got %v", parts)
 	}
 }

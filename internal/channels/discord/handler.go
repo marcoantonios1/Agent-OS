@@ -5,19 +5,47 @@ package discord
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
+	"path"
 	"strings"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
 
+	"github.com/marcoantonios1/Agent-OS/internal/attachments"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
 
 // maxMessageLen is Discord's per-message character limit.
 const maxMessageLen = 2000
+
+// maxDiscordAttachments is the maximum number of attachments processed per message.
+const maxDiscordAttachments = 5
+
+// discordSupportedTypes lists the attachment MIME types the Discord handler processes.
+var discordSupportedTypes = map[string]bool{
+	"image/jpeg":      true,
+	"image/png":       true,
+	"image/webp":      true,
+	"image/gif":       true,
+	"application/pdf": true,
+}
+
+// extMimeTypes is a fallback map from lowercase file extension to MIME type,
+// used when Discord does not provide a Content-Type on the attachment.
+var extMimeTypes = map[string]string{
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".png":  "image/png",
+	".webp": "image/webp",
+	".gif":  "image/gif",
+	".pdf":  "application/pdf",
+}
 
 // editInterval is how often the in-progress message is edited while streaming.
 // 500 ms gives ~2 edits/sec — well within Discord's ~5 edits/sec rate limit.
@@ -32,7 +60,8 @@ type Handler struct {
 	prefix     string // optional command prefix (e.g. "!ai"); empty = no prefix filter
 	log        *slog.Logger
 	session    *discordgo.Session
-	botUserID  string // populated after Start() — used to strip @mention prefix
+	botUserID  string       // populated after Start() — used to strip @mention prefix
+	httpClient *http.Client // used to download attachments; defaults to http.DefaultClient
 }
 
 // New creates a Handler.
@@ -47,6 +76,7 @@ func New(dispatcher web.Dispatcher, botToken, guildID, prefix string) *Handler {
 		guildID:    guildID,
 		prefix:     prefix,
 		log:        slog.Default(),
+		httpClient: http.DefaultClient,
 	}
 }
 
@@ -105,13 +135,24 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 	isDM := m.GuildID == ""
 
 	text, shouldRoute := preprocessText(m.Content, h.botUserID, h.prefix, isDM)
-	if !shouldRoute {
+
+	ctx := context.Background()
+
+	// For attachment-only messages (no text / stripped text is empty): still
+	// route when the message passes the prefix/mention filter.
+	if !shouldRoute && !passesFilter(m.Content, h.botUserID, h.prefix, isDM) {
+		return
+	}
+
+	attParts := h.fetchAttachments(ctx, m.Attachments)
+
+	// Nothing to route: no text and no usable attachments.
+	if !shouldRoute && len(attParts) == 0 {
 		return
 	}
 
 	sid := sessionKey(m.GuildID, m.ChannelID, m.Author.ID)
 
-	ctx := context.Background()
 	h.log.InfoContext(ctx, "channel_received",
 		"session_id", sid,
 		"user_id", m.Author.ID,
@@ -119,8 +160,21 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		"guild_id", m.GuildID,
 		"is_dm", isDM,
 		"text_length", len(text),
+		"attachments", len(attParts),
 		"channel", "discord",
 	)
+
+	// Build the Parts slice when attachments are present.
+	// The user's text is prepended as the first part so the LLM always sees
+	// the question alongside the attachment content.
+	var msgParts []types.ContentPart
+	if len(attParts) > 0 {
+		msgParts = make([]types.ContentPart, 0, 1+len(attParts))
+		if text != "" {
+			msgParts = append(msgParts, types.ContentPart{Type: "text", Text: text})
+		}
+		msgParts = append(msgParts, attParts...)
+	}
 
 	start := time.Now()
 	inbound := types.InboundMessage{
@@ -130,6 +184,7 @@ func (h *Handler) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCrea
 		SessionID: sid,
 		Text:      text,
 		Timestamp: start,
+		Parts:     msgParts,
 	}
 
 	h.routeAndRespond(s, ctx, m.ChannelID, inbound, sid, start)
@@ -249,6 +304,92 @@ func truncateForEdit(text string) string {
 		cut = idx
 	}
 	return text[:cut] + ellipsis
+}
+
+// passesFilter reports whether a message should be considered for routing
+// based on channel context alone — regardless of whether the text is empty.
+// Used to decide if an attachment-only message should be routed.
+func passesFilter(text, botID, prefix string, isDM bool) bool {
+	if isDM || prefix == "" {
+		return true
+	}
+	// Guild channel with prefix: accept if the message has a @mention or the prefix.
+	cleaned := strings.TrimSpace(text)
+	if stripped := strings.TrimSpace(stripMention(cleaned, botID)); stripped != cleaned {
+		return true // had a @mention
+	}
+	return strings.HasPrefix(cleaned, prefix)
+}
+
+// fetchAttachments downloads and processes Discord message attachments into
+// ContentParts. Unsupported types are silently skipped; HTTP errors are logged
+// and the attachment is skipped. At most maxDiscordAttachments are processed.
+func (h *Handler) fetchAttachments(ctx context.Context, atts []*discordgo.MessageAttachment) []types.ContentPart {
+	if len(atts) == 0 {
+		return nil
+	}
+	limit := len(atts)
+	if limit > maxDiscordAttachments {
+		limit = maxDiscordAttachments
+	}
+
+	var parts []types.ContentPart
+	for _, att := range atts[:limit] {
+		mimeType := strings.TrimSpace(strings.SplitN(att.ContentType, ";", 2)[0])
+		if mimeType == "" {
+			mimeType = extMimeTypes[strings.ToLower(path.Ext(att.Filename))]
+		}
+		if !discordSupportedTypes[mimeType] {
+			if mimeType != "" {
+				h.log.InfoContext(ctx, "discord: ignoring unsupported attachment",
+					"filename", att.Filename, "mime_type", mimeType)
+			}
+			continue
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, att.URL, nil)
+		if err != nil {
+			h.log.WarnContext(ctx, "discord: failed to build download request",
+				"filename", att.Filename, "error", err)
+			continue
+		}
+		resp, err := h.httpClient.Do(req)
+		if err != nil {
+			h.log.WarnContext(ctx, "discord: failed to download attachment",
+				"filename", att.Filename, "error", err)
+			continue
+		}
+		data, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			h.log.WarnContext(ctx, "discord: failed to read attachment body",
+				"filename", att.Filename, "error", readErr)
+			continue
+		}
+
+		switch {
+		case strings.HasPrefix(mimeType, "image/"):
+			parts = append(parts, types.ContentPart{
+				Type:      "image",
+				ImageData: base64.StdEncoding.EncodeToString(data),
+				MimeType:  mimeType,
+				Filename:  att.Filename,
+			})
+		case mimeType == "application/pdf":
+			extracted, err := attachments.ExtractPDFText(data)
+			if err != nil {
+				h.log.WarnContext(ctx, "discord: failed to extract PDF text",
+					"filename", att.Filename, "error", err)
+				continue
+			}
+			parts = append(parts, types.ContentPart{
+				Type:     "text",
+				Text:     extracted,
+				Filename: att.Filename,
+			})
+		}
+	}
+	return parts
 }
 
 // sessionKey returns a stable, unique session key for a user × channel × guild
