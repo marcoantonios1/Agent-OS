@@ -277,5 +277,118 @@ func TestStream_DoneMarker(t *testing.T) {
 	}
 }
 
+// ── toOAIMessage tests ────────────────────────────────────────────────────────
+
+func TestToOAIMessage_TextOnly(t *testing.T) {
+	turn := types.ConversationTurn{Role: "user", Content: "hello"}
+	raw := toOAIMessage(turn)
+
+	var got map[string]any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got["role"] != "user" {
+		t.Errorf("role = %v, want user", got["role"])
+	}
+	if got["content"] != "hello" {
+		t.Errorf("content = %v, want hello", got["content"])
+	}
+	if _, ok := got["parts"]; ok {
+		t.Error("unexpected 'parts' key in text-only message")
+	}
+}
+
+func TestToOAIMessage_VisionParts(t *testing.T) {
+	turn := types.ConversationTurn{
+		Role: "user",
+		Parts: []types.ContentPart{
+			{Type: "text", Text: "What does this show?"},
+			{Type: "image", ImageData: "abc123", MimeType: "image/jpeg"},
+		},
+	}
+	raw := toOAIMessage(turn)
+
+	var got struct {
+		Role    string `json:"role"`
+		Content []struct {
+			Type     string `json:"type"`
+			Text     string `json:"text,omitempty"`
+			ImageURL *struct {
+				URL string `json:"url"`
+			} `json:"image_url,omitempty"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Role != "user" {
+		t.Errorf("role = %q, want user", got.Role)
+	}
+	if len(got.Content) != 2 {
+		t.Fatalf("content parts = %d, want 2", len(got.Content))
+	}
+	if got.Content[0].Type != "text" || got.Content[0].Text != "What does this show?" {
+		t.Errorf("part[0] = %+v", got.Content[0])
+	}
+	if got.Content[1].Type != "image_url" {
+		t.Errorf("part[1].type = %q, want image_url", got.Content[1].Type)
+	}
+	wantURL := "data:image/jpeg;base64,abc123"
+	if got.Content[1].ImageURL == nil || got.Content[1].ImageURL.URL != wantURL {
+		t.Errorf("part[1].image_url.url = %v, want %q", got.Content[1].ImageURL, wantURL)
+	}
+}
+
+func TestToOAIMessage_DocumentPart(t *testing.T) {
+	turn := types.ConversationTurn{
+		Role: "user",
+		Parts: []types.ContentPart{
+			{Type: "document", ImageData: "pdfbytes", MimeType: "application/pdf", Filename: "invoice.pdf"},
+		},
+	}
+	raw := toOAIMessage(turn)
+
+	var got struct {
+		Content []struct {
+			Type     string `json:"type"`
+			ImageURL *struct {
+				URL string `json:"url"`
+			} `json:"image_url,omitempty"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got.Content) != 1 {
+		t.Fatalf("content parts = %d, want 1", len(got.Content))
+	}
+	wantURL := "data:application/pdf;base64,pdfbytes"
+	if got.Content[0].ImageURL == nil || got.Content[0].ImageURL.URL != wantURL {
+		t.Errorf("url = %v, want %q", got.Content[0].ImageURL, wantURL)
+	}
+}
+
+func TestToOAIMessage_PartsIgnoreContent(t *testing.T) {
+	// When Parts is set, Content string must be ignored.
+	turn := types.ConversationTurn{
+		Role:    "user",
+		Content: "this should be ignored",
+		Parts:   []types.ContentPart{{Type: "text", Text: "from parts"}},
+	}
+	raw := toOAIMessage(turn)
+
+	var got struct {
+		Content []struct {
+			Text string `json:"text,omitempty"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got.Content) != 1 || got.Content[0].Text != "from parts" {
+		t.Errorf("expected single part with text 'from parts', got %+v", got.Content)
+	}
+}
+
 // Compile-time check: *Client satisfies LLMClient.
 var _ LLMClient = (*Client)(nil)
