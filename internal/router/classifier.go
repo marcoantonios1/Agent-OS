@@ -29,14 +29,6 @@ const (
 	// users cannot invoke it directly and it never appears in the classifier prompt.
 	// The Builder Agent calls it via SubAgentCaller.Call("reviewer", prompt).
 	IntentReviewer Intent = "reviewer"
-	// IntentDoctor routes to the doctor agent (health-related questions).
-	IntentDoctor Intent = "doctor"
-	// IntentCompanion routes to the companion agent (conversational partner for
-	// venting, reflecting, or thinking something through).
-	IntentCompanion Intent = "companion"
-	// IntentNotes routes to the notes agent (saving, finding, updating, or
-	// summarising personal notes and documents).
-	IntentNotes Intent = "notes"
 	// IntentUnknown is returned when classification fails or is ambiguous.
 	IntentUnknown Intent = "unknown"
 )
