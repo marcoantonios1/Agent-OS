@@ -228,27 +228,20 @@ func parseIntents(raw string) []Intent {
 		return []Intent{IntentUnknown}
 	}
 
-	// New format: intents array.
+	// New format: intents array. Pass all strings through — the router handles
+	// unregistered intents gracefully, and the generic agent layer registers
+	// arbitrary intent strings at startup.
 	if len(result.Intents) > 0 {
 		out := make([]Intent, 0, len(result.Intents))
 		for _, s := range result.Intents {
-			intent := Intent(s)
-			switch intent {
-			case IntentComms, IntentBuilder, IntentResearch, IntentUnknown:
-				out = append(out, intent)
-			default:
-				out = append(out, IntentUnknown)
-			}
+			out = append(out, Intent(s))
 		}
 		return out
 	}
 
 	// Legacy fallback: single "intent" string.
 	if result.Intent != "" {
-		switch Intent(result.Intent) {
-		case IntentComms, IntentBuilder, IntentResearch, IntentUnknown:
-			return []Intent{Intent(result.Intent)}
-		}
+		return []Intent{Intent(result.Intent)}
 	}
 
 	return []Intent{IntentUnknown}
