@@ -58,3 +58,19 @@ func (r *ToolRegistry) Execute(ctx context.Context, name string, input json.RawM
 	}
 	return t.Execute(ctx, input)
 }
+
+// Subset returns a new ToolRegistry containing only the named tools.
+// The second return value lists any names not found in this registry.
+func (r *ToolRegistry) Subset(names []string) (*ToolRegistry, []string) {
+	sub := NewRegistry()
+	var missing []string
+	for _, name := range names {
+		t, ok := r.tools[name]
+		if !ok {
+			missing = append(missing, name)
+			continue
+		}
+		sub.Register(t)
+	}
+	return sub, missing
+}
