@@ -29,6 +29,14 @@ const (
 	// users cannot invoke it directly and it never appears in the classifier prompt.
 	// The Builder Agent calls it via SubAgentCaller.Call("reviewer", prompt).
 	IntentReviewer Intent = "reviewer"
+	// IntentDoctor routes to the doctor agent (health-related questions).
+	IntentDoctor Intent = "doctor"
+	// IntentCompanion routes to the companion agent (conversational partner for
+	// venting, reflecting, or thinking something through).
+	IntentCompanion Intent = "companion"
+	// IntentNotes routes to the notes agent (saving, finding, updating, or
+	// summarising personal notes and documents).
+	IntentNotes Intent = "notes"
 	// IntentUnknown is returned when classification fails or is ambiguous.
 	IntentUnknown Intent = "unknown"
 )
@@ -40,7 +48,6 @@ const (
 type IntentClassifier interface {
 	Classify(ctx context.Context, sessionID, input string, history []types.ConversationTurn) ([]Intent, error)
 }
-
 
 const systemPrompt = `You are an intent classifier for a multi-agent AI system.
 Your job is to read the user's latest message (and optionally the conversation
@@ -97,7 +104,7 @@ The valid intent values are:
                Examples: "Save a note about today's meeting", "Find my note on the project plan",
                          "What notes do I have?", "Update my note about Alice", "Write a journal entry"
 
-- "unknown"  – it is sent to the comms agent by default, which can handle general conversation and fallback responses.
+- "unknown"  – it is sent to the companion agent by default, which can handle general conversation and fallback responses.
 
 ## Compound requests
 If the user asks for multiple distinct tasks that belong to different agents,
