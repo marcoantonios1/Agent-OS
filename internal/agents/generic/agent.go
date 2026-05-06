@@ -8,8 +8,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
+	"time"
 
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
+	"github.com/marcoantonios1/Agent-OS/internal/sessions"
 	"github.com/marcoantonios1/Agent-OS/internal/tools"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
@@ -99,9 +103,71 @@ func (a *Agent) buildLoop(ctx context.Context, caller types.SubAgentCaller) *too
 
 func (a *Agent) buildMessages(req types.AgentRequest) []types.ConversationTurn {
 	msgs := make([]types.ConversationTurn, 0, len(req.History)+1)
-	msgs = append(msgs, types.ConversationTurn{Role: "system", Content: a.cfg.SystemPrompt})
+	msgs = append(msgs, types.ConversationTurn{Role: "system", Content: a.buildDynamicPrompt(req)})
 	msgs = append(msgs, req.History...)
 	return msgs
+}
+
+// buildDynamicPrompt appends two context blocks to the static SYSTEM.md content
+// at call time so every generic agent has accurate situational awareness:
+//
+//  1. ## User context — user name, style, preferences, contacts (when the router
+//     has injected a profile under req.Metadata["user.profile"]).
+//  2. ## Current time — local RFC3339 timestamp and day of week, giving agents
+//     that work with calendar or time-sensitive data the correct timezone offset.
+func (a *Agent) buildDynamicPrompt(req types.AgentRequest) string {
+	var sb strings.Builder
+	sb.WriteString(a.cfg.SystemPrompt)
+
+	if raw := req.Metadata["user.profile"]; raw != "" {
+		var p sessions.UserProfile
+		if err := json.Unmarshal([]byte(raw), &p); err == nil {
+			sb.WriteString("\n\n## User context")
+			if p.Name != "" {
+				sb.WriteString("\nName: ")
+				sb.WriteString(p.Name)
+			}
+			if p.CommunicationStyle != "" {
+				sb.WriteString("\nCommunication style: ")
+				sb.WriteString(p.CommunicationStyle)
+			}
+			if len(p.Preferences) > 0 {
+				sb.WriteString("\nPreferences:")
+				keys := make([]string, 0, len(p.Preferences))
+				for k := range p.Preferences {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				for _, k := range keys {
+					sb.WriteString("\n  - ")
+					sb.WriteString(k)
+					sb.WriteString(": ")
+					sb.WriteString(p.Preferences[k])
+				}
+			}
+			if len(p.RecurringContacts) > 0 {
+				sb.WriteString("\nRecurring contacts:")
+				for _, c := range p.RecurringContacts {
+					sb.WriteString("\n  - ")
+					sb.WriteString(c.Name)
+					sb.WriteString(" (")
+					sb.WriteString(c.Email)
+					sb.WriteString(")")
+					if c.Notes != "" {
+						sb.WriteString(" — ")
+						sb.WriteString(c.Notes)
+					}
+				}
+			}
+		}
+	}
+
+	now := time.Now()
+	sb.WriteString("\n\n## Current time\nLocal date/time (use this UTC offset for ALL calendar timestamps): ")
+	sb.WriteString(now.Format(time.RFC3339))
+	sb.WriteString("\nDay of week: ")
+	sb.WriteString(now.Weekday().String())
+	return sb.String()
 }
 
 func (a *Agent) maxTokens() int {
