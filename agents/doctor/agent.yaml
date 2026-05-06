@@ -1,5 +1,5 @@
 id: doctor
-model: gemma4:26b
+model: medgemma:27b
 max_tokens: 4096
 intents:
   - doctor
