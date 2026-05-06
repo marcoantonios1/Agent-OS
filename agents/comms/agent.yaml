@@ -1,0 +1,24 @@
+id: comms
+model: gemma4:26b
+max_tokens: 4096
+intents:
+  - comms
+  - email
+  - calendar
+  - reminder
+  - schedule
+skills:
+  - email_list
+  - email_read
+  - email_search
+  - email_draft
+  - email_send
+  - calendar_list
+  - calendar_read
+  - calendar_create
+  - calendar_update
+  - reminder_set
+  - reminder_cancel
+  - reminder_list
+  - user_profile_read
+  - user_profile_update
