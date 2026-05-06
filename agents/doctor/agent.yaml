@@ -1,0 +1,13 @@
+id: doctor
+model: medgemma
+max_tokens: 4096
+intents:
+  - doctor
+  - medical
+  - health
+  - symptoms
+  - medication
+  - diagnosis
+skills:
+  - web_search
+  - web_fetch

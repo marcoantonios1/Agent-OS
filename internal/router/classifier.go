@@ -85,6 +85,18 @@ The valid intent values are:
                          "Which database is better for time-series data?",
                          "Search for recent papers on LLMs"
 
+- "doctor"   – Questions about health, symptoms, medical conditions, medications, or how to interpret lab results.
+               Examples: "I have a headache and fever", "What does ibuprofen interact with?",
+                         "What could cause lower back pain?", "Explain my blood test results"
+
+- "companion" – The user wants to talk, vent, reflect, or think something through — not a task, just a conversation.
+               Examples: "I want to talk", "I've been feeling off lately", "Can we just chat?",
+                         "I need to vent", "What do you think about my situation?"
+
+- "notes"    – Saving, finding, updating, or summarising personal notes and documents.
+               Examples: "Save a note about today's meeting", "Find my note on the project plan",
+                         "What notes do I have?", "Update my note about Alice", "Write a journal entry"
+
 - "unknown"  – it is sent to the comms agent by default, which can handle general conversation and fallback responses.
 
 ## Compound requests
@@ -111,7 +123,10 @@ Respond with ONLY valid JSON. No markdown, no explanation, no extra keys.
 Always use the "intents" array — never a bare "intent" string.
 Example responses:
   {"intents": ["builder"]}
-  {"intents": ["comms", "builder"]}`
+  {"intents": ["comms", "builder"]}
+  {"intents": ["doctor"]}
+  {"intents": ["companion"]}
+  {"intents": ["notes"]}`
 
 // LLMClassifier is the production IntentClassifier that uses Costguard for
 // LLM-based classification.
