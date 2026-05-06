@@ -1,6 +1,8 @@
 # Agent OS
 
-A multi-agent AI personal assistant that routes requests to specialised agents — Comms, Builder, Research, and Reviewer — through a single entry point. Agents share session history, a persistent user profile, and a structured tool framework.
+A multi-agent AI personal assistant that routes requests to specialised agents through a single entry point. Agents share session history, a persistent user profile, and a structured tool framework.
+
+New agents can be added as plain folders — no Go code required. See [docs/adding-agents.md](docs/adding-agents.md).
 
 ## Architecture
 
@@ -10,19 +12,21 @@ Channels (Web · Discord · WhatsApp)
                ▼
         Router / Classifier
                │
-   ┌───────────┼───────────┐
-   ▼           ▼           ▼           ▼
-Comms       Builder     Research    Reviewer
-Agent        Agent       Agent       Agent
+   ┌───────────┼─────────────────┐
+   ▼           ▼           ▼     ▼  ...
+Comms       Builder     Research  Generic agents
+Agent        Agent       Agent    (agents/ folder)
    │           │           │           │
    ▼           ▼           ▼           ▼
-Email       Code/File   WebSearch   Code/File
-Calendar      Shell     WebFetch      Shell
+Email       Code/File   WebSearch   Any declared
+Calendar      Shell     WebFetch    skill subset
 UserProfile  Project
 Reminders   Load/List
 ```
 
 **Request flow:** channel receives message → router classifies intent → one or more agents run their agentic loop (LLM ↔ tools) → response merged and returned → session history persisted.
+
+**Generic agent layer:** agents defined as folders under `agents/` (an `agent.yaml` + `SYSTEM.md`) are loaded at startup with no code changes. The Comms, Research, Doctor, Companion, and Notes agents all use this mechanism. See [docs/adding-agents.md](docs/adding-agents.md) for a step-by-step guide.
 
 ## What's built
 
@@ -53,6 +57,10 @@ Reminders   Load/List
 | 23 | Dual email/calendar providers — Gmail + Outlook read in parallel; writes go to primary | Done |
 | 24 | Context-aware reminders — `agent_prompt` field runs a Comms Agent call at fire time | Done |
 | 25 | Reviewer Agent — code review workflow: reads workspace files, emits structured feedback | Done |
+| 26 | Generic agent layer — add agents as `agent.yaml` + `SYSTEM.md` folders, zero Go code | Done |
+| 27 | Doctor Agent — MedGemma-powered medical information assistant | Done |
+| 28 | Companion Agent — personal conversational companion with user profile awareness | Done |
+| 29 | Notes Agent — capture, find, and update markdown notes via file tools | Done |
 
 ## Quick start
 
@@ -245,6 +253,13 @@ internal/
     builder/            — Builder Agent (requirements → spec → tasks → codegen → review)
     research/           — Research Agent (web search + synthesis)
     reviewer/           — Reviewer Agent (code review: reads workspace, emits structured feedback)
+    generic/            — loader: scans agents/ folders and registers them at startup
+agents/
+  comms/                — agent.yaml + SYSTEM.md (loaded by generic layer)
+  research/             — agent.yaml + SYSTEM.md
+  doctor/               — agent.yaml + SYSTEM.md (MedGemma medical assistant)
+  companion/            — agent.yaml + SYSTEM.md (personal conversational companion)
+  notes/                — agent.yaml + SYSTEM.md (markdown notes manager)
   tools/
     loop.go             — agentic loop (Complete for tool steps, Stream for final reply)
     email/              — email_list/read/search/draft/send + Gmail/Outlook providers
@@ -261,6 +276,8 @@ migrations/
   002_reminders_created_at.sql
   003_reminders_agent_prompt.sql
 docs/
+  adding-agents.md      — step-by-step guide: add a new agent with no Go code
+  skills.md             — full list of built-in skills and what each one does
   email-setup.md
   calendar-setup.md
 test/
