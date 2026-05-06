@@ -32,8 +32,6 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/sessions"
 	"github.com/marcoantonios1/Agent-OS/internal/tools"
-	"github.com/marcoantonios1/Agent-OS/internal/tools/code"
-	toolproject "github.com/marcoantonios1/Agent-OS/internal/tools/project"
 	toolresearch "github.com/marcoantonios1/Agent-OS/internal/tools/research"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
@@ -200,18 +198,11 @@ type Agent struct {
 // New constructs a Builder Agent.
 //
 //   - llm is the LLM client (Costguard gateway).
+//   - reg is a pre-built tool registry — the caller is responsible for
+//     registering all required tools before passing it in.
 //   - store is the session store — used to persist phase metadata across turns.
-//   - cfg is the code tool configuration (sandbox directory, blocked commands, etc.).
 //   - projects is the persistent project store — survives session expiry.
-func New(llm costguard.LLMClient, store sessions.SessionStore, cfg code.Config, projects sessions.ProjectStore, model string) *Agent {
-	reg := tools.NewRegistry()
-	reg.Register(code.NewReadTool(cfg))
-	reg.Register(code.NewWriteTool(cfg))
-	reg.Register(code.NewListTool(cfg))
-	reg.Register(code.NewShellTool(cfg))
-	reg.Register(toolproject.NewListTool(projects, store))
-	reg.Register(toolproject.NewLoadTool(projects, store))
-
+func New(llm costguard.LLMClient, reg *tools.ToolRegistry, store sessions.SessionStore, projects sessions.ProjectStore, model string) *Agent {
 	return &Agent{
 		loop: &tools.AgenticLoop{
 			Client:   llm,

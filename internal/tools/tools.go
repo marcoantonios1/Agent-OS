@@ -74,3 +74,14 @@ func (r *ToolRegistry) Subset(names []string) (*ToolRegistry, []string) {
 	}
 	return sub, missing
 }
+
+// MergeFrom copies every tool from other into r, overwriting any existing tool
+// with the same name. It is a no-op if other is nil.
+func (r *ToolRegistry) MergeFrom(other *ToolRegistry) {
+	if other == nil {
+		return
+	}
+	for name, t := range other.tools {
+		r.tools[name] = t
+	}
+}

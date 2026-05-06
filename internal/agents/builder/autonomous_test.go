@@ -11,7 +11,9 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/memory"
 	"github.com/marcoantonios1/Agent-OS/internal/sessions"
+	"github.com/marcoantonios1/Agent-OS/internal/tools"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/code"
+	project "github.com/marcoantonios1/Agent-OS/internal/tools/project"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
 
@@ -85,7 +87,15 @@ func primeForAutonomous(store *memory.Store, projects *memory.ProjectStore, sess
 func newAutonomousAgent(llm costguard.LLMClient) (*builder.Agent, *memory.Store, *memory.ProjectStore) {
 	store := memory.NewStore()
 	projects := memory.NewProjectStore()
-	a := builder.New(llm, store, code.Config{SandboxDir: ""}, projects, "test-model")
+	cfg := code.Config{SandboxDir: ""}
+	reg := tools.NewRegistry()
+	reg.Register(code.NewReadTool(cfg))
+	reg.Register(code.NewWriteTool(cfg))
+	reg.Register(code.NewListTool(cfg))
+	reg.Register(code.NewShellTool(cfg))
+	reg.Register(project.NewListTool(projects, store))
+	reg.Register(project.NewLoadTool(projects, store))
+	a := builder.New(llm, reg, store, projects, "test-model")
 	return a, store, projects
 }
 
@@ -99,7 +109,16 @@ func TestAutonomous_SkippedWhenFlagAbsent(t *testing.T) {
 	}}
 	store := memory.NewStore()
 	t.Cleanup(store.Close)
-	a := builder.New(llm, store, code.Config{}, memory.NewProjectStore(), "m")
+	inlineCfg := code.Config{}
+	inlineProjects := memory.NewProjectStore()
+	inlineReg := tools.NewRegistry()
+	inlineReg.Register(code.NewReadTool(inlineCfg))
+	inlineReg.Register(code.NewWriteTool(inlineCfg))
+	inlineReg.Register(code.NewListTool(inlineCfg))
+	inlineReg.Register(code.NewShellTool(inlineCfg))
+	inlineReg.Register(project.NewListTool(inlineProjects, store))
+	inlineReg.Register(project.NewLoadTool(inlineProjects, store))
+	a := builder.New(llm, inlineReg, store, inlineProjects, "m")
 
 	_, err := a.Handle(context.Background(), types.AgentRequest{
 		SessionID: "s-no-auto",

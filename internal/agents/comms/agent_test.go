@@ -12,8 +12,12 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/memory"
+	"github.com/marcoantonios1/Agent-OS/internal/sessions"
+	ctools "github.com/marcoantonios1/Agent-OS/internal/tools"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/calendar"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/email"
+	"github.com/marcoantonios1/Agent-OS/internal/tools/reminder"
+	"github.com/marcoantonios1/Agent-OS/internal/tools/userprofile"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
 
@@ -179,6 +183,33 @@ func (p *stubCalendarProvider) Update(_ context.Context, input calendar.UpdateEv
 	return &e, nil
 }
 
+// ── registry builder ─────────────────────────────────────────────────────────
+
+// buildCommsRegistry builds a tools.ToolRegistry for the comms agent from stub providers.
+// Mirrors the wiring in skills.NewGlobalRegistry but accepts test doubles.
+func buildCommsRegistry(ep email.EmailProvider, cp calendar.CalendarProvider, store approval.Store, users sessions.UserStore, reminders sessions.ReminderStore) *ctools.ToolRegistry {
+	reg := ctools.NewRegistry()
+	reg.Register(userprofile.NewReadTool(users))
+	reg.Register(userprofile.NewUpdateTool(users))
+	reg.Register(reminder.NewSetTool(reminders))
+	reg.Register(reminder.NewCancelTool(reminders))
+	reg.Register(reminder.NewListTool(reminders))
+	if ep != nil {
+		reg.Register(email.NewListTool(ep))
+		reg.Register(email.NewReadTool(ep))
+		reg.Register(email.NewSearchTool(ep))
+		reg.Register(email.NewDraftTool(ep))
+		reg.Register(email.NewSendTool(ep, store))
+	}
+	if cp != nil {
+		reg.Register(calendar.NewListTool(cp))
+		reg.Register(calendar.NewReadTool(cp))
+		reg.Register(calendar.NewCreateTool(cp, store))
+		reg.Register(calendar.NewUpdateTool(cp, store))
+	}
+	return reg
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func newRequest(sessionID, input string, history ...types.ConversationTurn) types.AgentRequest {
@@ -209,7 +240,7 @@ func TestHandle_CheckEmails(t *testing.T) {
 		textReply("You have 2 emails: from alice@example.com about 'Q2 budget review', and from bob@startup.io about 'Coffee catch-up?'."),
 	}}
 
-	agent := comms.New(llm, emailProv, newStubCalendarProvider(), store, memory.NewUserStore(), memory.NewReminderStore(), "gemma4:26b")
+	agent := comms.New(llm, buildCommsRegistry(emailProv, newStubCalendarProvider(), store, memory.NewUserStore(), memory.NewReminderStore()), "gemma4:26b")
 	resp, err := agent.Handle(agentCtx("sess-1"), newRequest("sess-1", "Check my emails"))
 
 	if err != nil {
@@ -244,7 +275,7 @@ func TestHandle_CalendarQuery(t *testing.T) {
 		textReply("Tomorrow you have: Team standup at 9:00 AM and Product review at 2:00 PM."),
 	}}
 
-	agent := comms.New(llm, newStubEmailProvider(), calProv, store, memory.NewUserStore(), memory.NewReminderStore(), "gemma4:26b")
+	agent := comms.New(llm, buildCommsRegistry(newStubEmailProvider(), calProv, store, memory.NewUserStore(), memory.NewReminderStore()), "gemma4:26b")
 	resp, err := agent.Handle(agentCtx("sess-2"), newRequest("sess-2", "What's on my calendar tomorrow?"))
 
 	if err != nil {
@@ -270,7 +301,7 @@ func TestHandle_DraftReply(t *testing.T) {
 		textReply("Draft saved: to alice@example.com — 'Re: Q2 budget review'. Reply 'confirm' to send."),
 	}}
 
-	agent := comms.New(llm, emailProv, newStubCalendarProvider(), store, memory.NewUserStore(), memory.NewReminderStore(), "gemma4:26b")
+	agent := comms.New(llm, buildCommsRegistry(emailProv, newStubCalendarProvider(), store, memory.NewUserStore(), memory.NewReminderStore()), "gemma4:26b")
 	resp, err := agent.Handle(agentCtx("sess-3"), newRequest("sess-3", "Draft a reply to alice about the budget"))
 
 	if err != nil {
@@ -305,7 +336,7 @@ func TestHandle_SendEmail_RequiresApproval(t *testing.T) {
 		textReply("I need your approval to send this email to alice@example.com. Reply 'confirm' to proceed."),
 	}}
 
-	agent := comms.New(llm, emailProv, newStubCalendarProvider(), store, memory.NewUserStore(), memory.NewReminderStore(), "gemma4:26b")
+	agent := comms.New(llm, buildCommsRegistry(emailProv, newStubCalendarProvider(), store, memory.NewUserStore(), memory.NewReminderStore()), "gemma4:26b")
 	resp, err := agent.Handle(agentCtx("sess-4"), newRequest("sess-4", "Send the reply to alice"))
 
 	if err != nil {
@@ -346,7 +377,7 @@ func TestHandle_CreateCalendarEvent_RequiresApproval(t *testing.T) {
 		textReply("I need your approval to create 'Design review' on " + start.Format("Mon 2 Jan") + ". Reply 'confirm' to proceed."),
 	}}
 
-	agent := comms.New(llm, newStubEmailProvider(), calProv, store, memory.NewUserStore(), memory.NewReminderStore(), "gemma4:26b")
+	agent := comms.New(llm, buildCommsRegistry(newStubEmailProvider(), calProv, store, memory.NewUserStore(), memory.NewReminderStore()), "gemma4:26b")
 	resp, err := agent.Handle(agentCtx("sess-5"), newRequest("sess-5", "Schedule a design review next week"))
 
 	if err != nil {
@@ -386,7 +417,7 @@ func TestHandle_MultiStep(t *testing.T) {
 		textReply("I've read Alice's email and drafted a reply. Let me know if you'd like to send it."),
 	}}
 
-	agent := comms.New(llm, emailProv, newStubCalendarProvider(), store, memory.NewUserStore(), memory.NewReminderStore(), "gemma4:26b")
+	agent := comms.New(llm, buildCommsRegistry(emailProv, newStubCalendarProvider(), store, memory.NewUserStore(), memory.NewReminderStore()), "gemma4:26b")
 	resp, err := agent.Handle(agentCtx("sess-6"), newRequest("sess-6", "Read alice's email and draft a reply"))
 
 	if err != nil {
@@ -414,7 +445,7 @@ func TestHandle_NilProviders(t *testing.T) {
 		textReply("I don't have access to your email or calendar right now."),
 	}}
 
-	agent := comms.New(llm, nil, nil, store, memory.NewUserStore(), memory.NewReminderStore(), "gemma4:26b")
+	agent := comms.New(llm, buildCommsRegistry(nil, nil, store, memory.NewUserStore(), memory.NewReminderStore()), "gemma4:26b")
 	resp, err := agent.Handle(agentCtx("sess-7"), newRequest("sess-7", "Check my emails"))
 
 	if err != nil {
@@ -433,7 +464,7 @@ func TestHandle_SystemPromptIsFirst(t *testing.T) {
 		textReply("Got it."),
 	}}
 
-	agent := comms.New(llm, nil, nil, store, memory.NewUserStore(), memory.NewReminderStore(), "gemma4:26b")
+	agent := comms.New(llm, buildCommsRegistry(nil, nil, store, memory.NewUserStore(), memory.NewReminderStore()), "gemma4:26b")
 	agent.Handle(agentCtx("sess-8"), newRequest("sess-8", "Hello")) //nolint:errcheck
 
 	if len(llm.calls) == 0 {
