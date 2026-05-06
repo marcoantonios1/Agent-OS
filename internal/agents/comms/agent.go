@@ -15,14 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/marcoantonios1/Agent-OS/internal/approval"
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/sessions"
 	"github.com/marcoantonios1/Agent-OS/internal/tools"
-	"github.com/marcoantonios1/Agent-OS/internal/tools/calendar"
-	"github.com/marcoantonios1/Agent-OS/internal/tools/email"
-	"github.com/marcoantonios1/Agent-OS/internal/tools/reminder"
-	"github.com/marcoantonios1/Agent-OS/internal/tools/userprofile"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
 
@@ -164,44 +159,9 @@ type Agent struct {
 // New constructs a Comms Agent.
 //
 //   - llm is the LLM client (Costguard gateway).
-//   - emailProv is the email backend (Gmail, Outlook, or nil to omit email tools).
-//   - calProv is the calendar backend (Google, Outlook, or nil to omit calendar tools).
-//   - store is the approval store shared with the router.
-//   - users is the persistent user profile store (always required).
-//   - reminders is the reminder store (always required).
-func New(
-	llm costguard.LLMClient,
-	emailProv email.EmailProvider,
-	calProv calendar.CalendarProvider,
-	store approval.Store,
-	users sessions.UserStore,
-	reminders sessions.ReminderStore,
-	model string,
-) *Agent {
-	reg := tools.NewRegistry()
-
-	reg.Register(userprofile.NewReadTool(users))
-	reg.Register(userprofile.NewUpdateTool(users))
-
-	reg.Register(reminder.NewSetTool(reminders))
-	reg.Register(reminder.NewCancelTool(reminders))
-	reg.Register(reminder.NewListTool(reminders))
-
-	if emailProv != nil {
-		reg.Register(email.NewListTool(emailProv))
-		reg.Register(email.NewReadTool(emailProv))
-		reg.Register(email.NewSearchTool(emailProv))
-		reg.Register(email.NewDraftTool(emailProv))
-		reg.Register(email.NewSendTool(emailProv, store))
-	}
-
-	if calProv != nil {
-		reg.Register(calendar.NewListTool(calProv))
-		reg.Register(calendar.NewReadTool(calProv))
-		reg.Register(calendar.NewCreateTool(calProv, store))
-		reg.Register(calendar.NewUpdateTool(calProv, store))
-	}
-
+//   - reg is a pre-built ToolRegistry containing all tools the agent should use.
+//   - model is the LLM model identifier to use for completions.
+func New(llm costguard.LLMClient, reg *tools.ToolRegistry, model string) *Agent {
 	return &Agent{
 		loop: &tools.AgenticLoop{
 			Client:   llm,

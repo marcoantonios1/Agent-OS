@@ -23,9 +23,13 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/memory"
 	"github.com/marcoantonios1/Agent-OS/internal/router"
 	"github.com/marcoantonios1/Agent-OS/internal/tools"
+	"github.com/marcoantonios1/Agent-OS/internal/sessions"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/calendar"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/code"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/email"
+	"github.com/marcoantonios1/Agent-OS/internal/tools/project"
+	"github.com/marcoantonios1/Agent-OS/internal/tools/reminder"
+	"github.com/marcoantonios1/Agent-OS/internal/tools/userprofile"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/websearch"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
@@ -263,13 +267,19 @@ func newStack(cfg stackConfig) *testStack {
 	}
 
 	builderCfg := code.Config{SandboxDir: sandboxDir}
-	builderAgent := builder.New(agentLLM, store, builderCfg, projectStore, "gemma4:26b")
+	reminderStore := memory.NewReminderStore()
+
+	commsReg := buildCommsRegistry(cfg.emailProv, cfg.calProv, approvals, userStore, reminderStore)
+	builderReg := buildBuilderRegistry(builderCfg, projectStore, store)
+	reviewerReg := buildReviewerRegistry(builderCfg)
+
+	builderAgent := builder.New(agentLLM, builderReg, store, projectStore, "gemma4:26b")
 
 	agents := map[router.Intent]router.Agent{
-		router.IntentComms:    comms.New(agentLLM, cfg.emailProv, cfg.calProv, approvals, userStore, memory.NewReminderStore(), "gemma4:26b"),
+		router.IntentComms:    comms.New(agentLLM, commsReg, "gemma4:26b"),
 		router.IntentBuilder:  builderAgent,
 		router.IntentResearch: research.New(agentLLM, newWebSearchRegistry(searchProv), "gemma4:26b"),
-		router.IntentReviewer: reviewer.New(agentLLM, "gemma4:26b", builderCfg),
+		router.IntentReviewer: reviewer.New(agentLLM, reviewerReg, "gemma4:26b"),
 	}
 
 	r := router.New(classifier, agents, store, approvals)
@@ -294,6 +304,50 @@ func newStack(cfg stackConfig) *testStack {
 func (ts *testStack) Close() {
 	ts.srv.Close()
 	ts.store.Close()
+}
+
+// ── registry builders for tests ───────────────────────────────────────────────
+
+func buildCommsRegistry(ep email.EmailProvider, cp calendar.CalendarProvider, approvals approval.Store, users sessions.UserStore, reminders sessions.ReminderStore) *tools.ToolRegistry {
+	reg := tools.NewRegistry()
+	reg.Register(userprofile.NewReadTool(users))
+	reg.Register(userprofile.NewUpdateTool(users))
+	reg.Register(reminder.NewSetTool(reminders))
+	reg.Register(reminder.NewCancelTool(reminders))
+	reg.Register(reminder.NewListTool(reminders))
+	if ep != nil {
+		reg.Register(email.NewListTool(ep))
+		reg.Register(email.NewReadTool(ep))
+		reg.Register(email.NewSearchTool(ep))
+		reg.Register(email.NewDraftTool(ep))
+		reg.Register(email.NewSendTool(ep, approvals))
+	}
+	if cp != nil {
+		reg.Register(calendar.NewListTool(cp))
+		reg.Register(calendar.NewReadTool(cp))
+		reg.Register(calendar.NewCreateTool(cp, approvals))
+		reg.Register(calendar.NewUpdateTool(cp, approvals))
+	}
+	return reg
+}
+
+func buildBuilderRegistry(cfg code.Config, projects sessions.ProjectStore, store sessions.SessionStore) *tools.ToolRegistry {
+	reg := tools.NewRegistry()
+	reg.Register(code.NewReadTool(cfg))
+	reg.Register(code.NewWriteTool(cfg))
+	reg.Register(code.NewListTool(cfg))
+	reg.Register(code.NewShellTool(cfg))
+	reg.Register(project.NewListTool(projects, store))
+	reg.Register(project.NewLoadTool(projects, store))
+	return reg
+}
+
+func buildReviewerRegistry(cfg code.Config) *tools.ToolRegistry {
+	reg := tools.NewRegistry()
+	reg.Register(code.NewListTool(cfg))
+	reg.Register(code.NewReadTool(cfg))
+	reg.Register(code.NewShellTool(cfg))
+	return reg
 }
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────

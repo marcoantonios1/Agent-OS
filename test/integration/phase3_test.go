@@ -23,8 +23,10 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/memory"
 	"github.com/marcoantonios1/Agent-OS/internal/sessions"
+	"github.com/marcoantonios1/Agent-OS/internal/tools"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/code"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/email"
+	toolproject "github.com/marcoantonios1/Agent-OS/internal/tools/project"
 	toolreminder "github.com/marcoantonios1/Agent-OS/internal/tools/reminder"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
@@ -254,7 +256,15 @@ func TestPhase3_SubAgentCall_BuilderToResearch(t *testing.T) {
 	defer store.Close()
 
 	cfg := code.Config{SandboxDir: t.TempDir()}
-	agent := builder.New(llm, store, cfg, memory.NewProjectStore(), "gemma4:26b")
+	projects := memory.NewProjectStore()
+	builderReg := tools.NewRegistry()
+	builderReg.Register(code.NewReadTool(cfg))
+	builderReg.Register(code.NewWriteTool(cfg))
+	builderReg.Register(code.NewListTool(cfg))
+	builderReg.Register(code.NewShellTool(cfg))
+	builderReg.Register(toolproject.NewListTool(projects, store))
+	builderReg.Register(toolproject.NewLoadTool(projects, store))
+	agent := builder.New(llm, builderReg, store, projects, "gemma4:26b")
 	agent.SetSubAgentCaller(caller)
 
 	resp, err := agent.Handle(context.Background(), types.AgentRequest{

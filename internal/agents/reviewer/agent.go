@@ -12,7 +12,6 @@ import (
 
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/tools"
-	"github.com/marcoantonios1/Agent-OS/internal/tools/code"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
 
@@ -65,21 +64,14 @@ type Agent struct {
 // New constructs a Reviewer Agent.
 //
 //   - llm is the LLM client (Costguard gateway).
+//   - reg is a pre-built tool registry — the caller is responsible for
+//     registering all required tools before passing it in.
 //   - model is the LLM model name used for all completions.
-//   - cfg is the code tool configuration — must share the same SandboxDir as
-//     the Builder Agent so the reviewer reads the files the builder wrote.
-func New(llm costguard.LLMClient, model string, cfg code.Config) *Agent {
-	reg := tools.NewRegistry()
-	reg.Register(code.NewListTool(cfg))
-	reg.Register(code.NewReadTool(cfg))
-	reg.Register(code.NewShellTool(cfg))
-	// No file_write — the reviewer is intentionally read-only.
-
+func New(llm costguard.LLMClient, reg *tools.ToolRegistry, model string) *Agent {
 	return &Agent{
 		loop: &tools.AgenticLoop{
 			Client:   llm,
 			Registry: reg,
-			MaxSteps: 20,
 		},
 		model: model,
 	}

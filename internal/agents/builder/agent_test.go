@@ -11,7 +11,9 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/memory"
 	"github.com/marcoantonios1/Agent-OS/internal/sessions"
+	"github.com/marcoantonios1/Agent-OS/internal/tools"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/code"
+	project "github.com/marcoantonios1/Agent-OS/internal/tools/project"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
 
@@ -45,7 +47,16 @@ func textReply(text string) costguard.CompletionResponse {
 
 func newAgent(t *testing.T, llm costguard.LLMClient, store *memory.Store) *builder.Agent {
 	t.Helper()
-	return builder.New(llm, store, code.Config{SandboxDir: t.TempDir()}, memory.NewProjectStore(), "gemma4:26b")
+	cfg := code.Config{SandboxDir: t.TempDir()}
+	projects := memory.NewProjectStore()
+	reg := tools.NewRegistry()
+	reg.Register(code.NewReadTool(cfg))
+	reg.Register(code.NewWriteTool(cfg))
+	reg.Register(code.NewListTool(cfg))
+	reg.Register(code.NewShellTool(cfg))
+	reg.Register(project.NewListTool(projects, store))
+	reg.Register(project.NewLoadTool(projects, store))
+	return builder.New(llm, reg, store, projects, "gemma4:26b")
 }
 
 func newStore(t *testing.T) *memory.Store {
@@ -220,7 +231,15 @@ func TestCodegenPhase_WritesFileAndValidates(t *testing.T) {
 	}))
 
 	cfg := code.Config{SandboxDir: dir}
-	a := builder.New(llm, store, cfg, memory.NewProjectStore(), "gemma4:26b")
+	projects := memory.NewProjectStore()
+	reg := tools.NewRegistry()
+	reg.Register(code.NewReadTool(cfg))
+	reg.Register(code.NewWriteTool(cfg))
+	reg.Register(code.NewListTool(cfg))
+	reg.Register(code.NewShellTool(cfg))
+	reg.Register(project.NewListTool(projects, store))
+	reg.Register(project.NewLoadTool(projects, store))
+	a := builder.New(llm, reg, store, projects, "gemma4:26b")
 
 	resp, err := a.Handle(context.Background(), types.AgentRequest{
 		SessionID: "s1",

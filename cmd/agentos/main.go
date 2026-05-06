@@ -12,6 +12,7 @@ import (
 
 	"github.com/marcoantonios1/Agent-OS/internal/agents/builder"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/comms"
+	"github.com/marcoantonios1/Agent-OS/internal/agents/generic"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/research"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/reviewer"
 	"github.com/marcoantonios1/Agent-OS/internal/app"
@@ -25,8 +26,9 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/observability"
 	"github.com/marcoantonios1/Agent-OS/internal/router"
 	"github.com/marcoantonios1/Agent-OS/internal/sessions"
-	"github.com/marcoantonios1/Agent-OS/internal/tools"
+	"github.com/marcoantonios1/Agent-OS/internal/skills"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/calendar"
+
 	calendarGoogle "github.com/marcoantonios1/Agent-OS/internal/tools/calendar/google"
 	calendarOutlook "github.com/marcoantonios1/Agent-OS/internal/tools/calendar/outlook"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/code"
@@ -83,13 +85,54 @@ func main() {
 	reminderWorker := reminder.NewWorker(reminderStore)
 
 	builderCfg := newBuilderConfig(cfg)
-	builderAgent := builder.New(llm, store, builderCfg, projectStore, cfg.BuilderModel)
+
+	// Build the global registry once. Every agent gets a subset of this registry.
+	globalRegistry := skills.NewGlobalRegistry(
+		newEmailProvider(ctx, cfg),
+		newCalendarProvider(ctx, cfg),
+		newSearchProvider(cfg),
+		approvals,
+		userStore,
+		reminderStore,
+		projectStore,
+		store,
+		builderCfg,
+	)
+
+	commsReg, _ := globalRegistry.Subset([]string{
+		"user_profile_read", "user_profile_update",
+		"reminder_set", "reminder_cancel", "reminder_list",
+		"email_list", "email_read", "email_search", "email_draft", "email_send",
+		"calendar_list", "calendar_read", "calendar_create", "calendar_update",
+	})
+	builderReg, _ := globalRegistry.Subset([]string{
+		"file_read", "file_write", "file_list", "shell_run",
+		"project_list", "project_load",
+	})
+	researchReg, _ := globalRegistry.Subset([]string{"web_search", "web_fetch"})
+	reviewerReg, _ := globalRegistry.Subset([]string{"file_read", "file_list", "shell_run"})
+
+	builderAgent := builder.New(llm, builderReg, store, projectStore, cfg.BuilderModel)
 
 	agents := map[router.Intent]router.Agent{
-		router.IntentComms:     comms.New(llm, newEmailProvider(ctx, cfg), newCalendarProvider(ctx, cfg), approvals, userStore, reminderStore, cfg.CommsModel),
-		router.IntentBuilder:   builderAgent,
-		router.IntentResearch:  research.New(llm, newWebSearchRegistry(cfg), cfg.ResearchModel),
-		router.IntentReviewer:  reviewer.New(llm, cfg.BuilderModel, builderCfg),
+		router.IntentComms:    comms.New(llm, commsReg, cfg.CommsModel),
+		router.IntentBuilder:  builderAgent,
+		router.IntentResearch: research.New(llm, researchReg, cfg.ResearchModel),
+		router.IntentReviewer: reviewer.New(llm, reviewerReg, cfg.BuilderModel),
+	}
+
+	// Load generic agents from the agents/ directory. Any intent not already
+	// claimed by a built-in agent is registered here. Errors are logged but
+	// never fatal — the system runs with whichever agents loaded successfully.
+	genericAgents, err := generic.LoadAll("agents", llm, globalRegistry)
+	if err != nil {
+		slog.Warn("generic agents: failed to scan agents directory", "error", err)
+	} else {
+		for intent, agent := range genericAgents {
+			if _, exists := agents[intent]; !exists {
+				agents[intent] = agent
+			}
+		}
 	}
 
 	r := router.New(classifier, agents, store, approvals)
@@ -172,16 +215,17 @@ func main() {
 	slog.Info("shutdown complete")
 }
 
-// newWebSearchRegistry builds a ToolRegistry containing web_search and web_fetch.
-// If SEARCH_API_KEY is not set a stub provider is used and a warning is logged —
-// the research agent still starts but has no live web access.
-func newWebSearchRegistry(cfg *app.Config) *tools.ToolRegistry {
+// newSearchProvider returns a SearchProvider for the configured search backend.
+// If SEARCH_API_KEY is not set a stub returning empty results is used and a
+// warning is logged — agents that depend on web search will fall back to LLM
+// knowledge only.
+func newSearchProvider(cfg *app.Config) websearch.SearchProvider {
 	if !cfg.SearchConfigured() {
 		slog.Warn("SEARCH_API_KEY not set — web search tools disabled; research agent will use LLM knowledge only")
-		return websearch.NewWebSearchRegistry(&stubSearchProvider{})
+		return &stubSearchProvider{}
 	}
 	slog.Info("web search enabled", "provider", cfg.SearchProvider)
-	return websearch.NewWebSearchRegistry(searchBrave.New(cfg.SearchAPIKey))
+	return searchBrave.New(cfg.SearchAPIKey)
 }
 
 // stubSearchProvider is returned when no API key is configured.

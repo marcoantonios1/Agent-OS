@@ -9,6 +9,7 @@ import (
 
 	"github.com/marcoantonios1/Agent-OS/internal/agents/reviewer"
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
+	"github.com/marcoantonios1/Agent-OS/internal/tools"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/code"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
@@ -48,7 +49,12 @@ func toolCall(id, name string, args any) costguard.CompletionResponse {
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func newAgent(llm costguard.LLMClient, dir string) *reviewer.Agent {
-	return reviewer.New(llm, "test-model", code.Config{SandboxDir: dir})
+	cfg := code.Config{SandboxDir: dir}
+	reg := tools.NewRegistry()
+	reg.Register(code.NewListTool(cfg))
+	reg.Register(code.NewReadTool(cfg))
+	reg.Register(code.NewShellTool(cfg))
+	return reviewer.New(llm, reg, "test-model")
 }
 
 func handle(t *testing.T, a *reviewer.Agent, prompt string) types.AgentResponse {

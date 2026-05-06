@@ -58,3 +58,30 @@ func (r *ToolRegistry) Execute(ctx context.Context, name string, input json.RawM
 	}
 	return t.Execute(ctx, input)
 }
+
+// Subset returns a new ToolRegistry containing only the named tools.
+// The second return value lists any names not found in this registry.
+func (r *ToolRegistry) Subset(names []string) (*ToolRegistry, []string) {
+	sub := NewRegistry()
+	var missing []string
+	for _, name := range names {
+		t, ok := r.tools[name]
+		if !ok {
+			missing = append(missing, name)
+			continue
+		}
+		sub.Register(t)
+	}
+	return sub, missing
+}
+
+// MergeFrom copies every tool from other into r, overwriting any existing tool
+// with the same name. It is a no-op if other is nil.
+func (r *ToolRegistry) MergeFrom(other *ToolRegistry) {
+	if other == nil {
+		return
+	}
+	for name, t := range other.tools {
+		r.tools[name] = t
+	}
+}

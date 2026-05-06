@@ -1,0 +1,9 @@
+id: support
+model: gemma4:26b
+max_tokens: 2048
+intents:
+  - support
+skills:
+  - web_search
+  - web_fetch
+  - user_profile_read
