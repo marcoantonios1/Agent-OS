@@ -1,0 +1,14 @@
+id: notes
+model: claude-sonnet-4-6
+max_tokens: 4096
+intents:
+  - notes
+  - note
+  - write
+  - journal
+  - memo
+  - document
+skills:
+  - file_read
+  - file_write
+  - file_list

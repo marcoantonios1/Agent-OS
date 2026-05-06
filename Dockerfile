@@ -20,8 +20,9 @@ RUN apk add --no-cache ca-certificates tzdata
 
 WORKDIR /app
 
-COPY --from=builder /out/agentos ./agentos
+COPY --from=builder /out/agentos  ./agentos
 COPY --from=builder /out/migrate  ./migrate
+COPY --from=builder /src/agents   ./agents
 
 # /data holds the SQLite database; mount a named volume here in production.
 RUN mkdir -p /data

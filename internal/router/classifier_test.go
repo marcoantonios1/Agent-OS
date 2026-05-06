@@ -140,10 +140,12 @@ func TestClassify_InvalidJSON_FallsBackToUnknown(t *testing.T) {
 	}
 }
 
-func TestClassify_UnrecognisedIntentValue_FallsBackToUnknown(t *testing.T) {
+func TestClassify_UnrecognisedIntentPassesThrough(t *testing.T) {
+	// Unrecognised intents are passed through unchanged so the generic agent
+	// layer can match them. The router handles unregistered intents gracefully.
 	c := newClassifier(`{"intents":["haiku"]}`, nil)
-	if got := firstIntent(t, c, "s6", "anything", nil); got != IntentUnknown {
-		t.Errorf("got %q, want %q", got, IntentUnknown)
+	if got := firstIntent(t, c, "s6", "anything", nil); got != Intent("haiku") {
+		t.Errorf("got %q, want %q", got, Intent("haiku"))
 	}
 }
 
@@ -198,7 +200,7 @@ func TestParseIntents_SingleIntent(t *testing.T) {
 		{`{"intents":["builder"]}`, []Intent{IntentBuilder}},
 		{`{"intents":["research"]}`, []Intent{IntentResearch}},
 		{`{"intents":["unknown"]}`, []Intent{IntentUnknown}},
-		{`{"intents":["COMMS"]}`, []Intent{IntentUnknown}}, // case-sensitive
+		{`{"intents":["COMMS"]}`, []Intent{Intent("COMMS")}}, // case-sensitive: passes through as-is
 		{`{}`, []Intent{IntentUnknown}},
 		{``, []Intent{IntentUnknown}},
 		{`null`, []Intent{IntentUnknown}},
@@ -235,7 +237,7 @@ func TestParseIntent_LegacyCompat(t *testing.T) {
 		{`{"intent":"builder"}`, IntentBuilder},
 		{`{"intent":"research"}`, IntentResearch},
 		{`{"intent":"unknown"}`, IntentUnknown},
-		{`{"intent":"COMMS"}`, IntentUnknown},
+		{`{"intent":"COMMS"}`, Intent("COMMS")}, // case-sensitive: passes through as-is
 		{`{}`, IntentUnknown},
 		{``, IntentUnknown},
 		{`null`, IntentUnknown},

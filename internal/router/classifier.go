@@ -41,7 +41,6 @@ type IntentClassifier interface {
 	Classify(ctx context.Context, sessionID, input string, history []types.ConversationTurn) ([]Intent, error)
 }
 
-
 const systemPrompt = `You are an intent classifier for a multi-agent AI system.
 Your job is to read the user's latest message (and optionally the conversation
 history) and return a JSON object with an "intents" array.
@@ -85,7 +84,19 @@ The valid intent values are:
                          "Which database is better for time-series data?",
                          "Search for recent papers on LLMs"
 
-- "unknown"  – it is sent to the comms agent by default, which can handle general conversation and fallback responses.
+- "doctor"   – Questions about health, symptoms, medical conditions, medications, or how to interpret lab results.
+               Examples: "I have a headache and fever", "What does ibuprofen interact with?",
+                         "What could cause lower back pain?", "Explain my blood test results"
+
+- "companion" – The user wants to talk, vent, reflect, or think something through — not a task, just a conversation.
+               Examples: "I want to talk", "I've been feeling off lately", "Can we just chat?",
+                         "I need to vent", "What do you think about my situation?"
+
+- "notes"    – Saving, finding, updating, or summarising personal notes and documents.
+               Examples: "Save a note about today's meeting", "Find my note on the project plan",
+                         "What notes do I have?", "Update my note about Alice", "Write a journal entry"
+
+- "unknown"  – it is sent to the companion agent by default, which can handle general conversation and fallback responses.
 
 ## Compound requests
 If the user asks for multiple distinct tasks that belong to different agents,
@@ -111,7 +122,10 @@ Respond with ONLY valid JSON. No markdown, no explanation, no extra keys.
 Always use the "intents" array — never a bare "intent" string.
 Example responses:
   {"intents": ["builder"]}
-  {"intents": ["comms", "builder"]}`
+  {"intents": ["comms", "builder"]}
+  {"intents": ["doctor"]}
+  {"intents": ["companion"]}
+  {"intents": ["notes"]}`
 
 // LLMClassifier is the production IntentClassifier that uses Costguard for
 // LLM-based classification.
@@ -213,27 +227,20 @@ func parseIntents(raw string) []Intent {
 		return []Intent{IntentUnknown}
 	}
 
-	// New format: intents array.
+	// New format: intents array. Pass all strings through — the router handles
+	// unregistered intents gracefully, and the generic agent layer registers
+	// arbitrary intent strings at startup.
 	if len(result.Intents) > 0 {
 		out := make([]Intent, 0, len(result.Intents))
 		for _, s := range result.Intents {
-			intent := Intent(s)
-			switch intent {
-			case IntentComms, IntentBuilder, IntentResearch, IntentUnknown:
-				out = append(out, intent)
-			default:
-				out = append(out, IntentUnknown)
-			}
+			out = append(out, Intent(s))
 		}
 		return out
 	}
 
 	// Legacy fallback: single "intent" string.
 	if result.Intent != "" {
-		switch Intent(result.Intent) {
-		case IntentComms, IntentBuilder, IntentResearch, IntentUnknown:
-			return []Intent{Intent(result.Intent)}
-		}
+		return []Intent{Intent(result.Intent)}
 	}
 
 	return []Intent{IntentUnknown}

@@ -1,0 +1,11 @@
+id: companion
+model: claude-sonnet-4-6
+max_tokens: 4096
+intents:
+  - companion
+  - chat
+  - talk
+  - feeling
+  - vent
+skills:
+  - user_profile_read
