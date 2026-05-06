@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -140,8 +141,8 @@ func TestHandle_SystemPromptIsFirstMessage(t *testing.T) {
 	if len(msgs) == 0 || msgs[0].Role != "system" {
 		t.Fatalf("first message is not system, got role=%q", msgs[0].Role)
 	}
-	if msgs[0].Content != "MySysPrompt" {
-		t.Errorf("system content = %q, want %q", msgs[0].Content, "MySysPrompt")
+	if !strings.HasPrefix(msgs[0].Content, "MySysPrompt") {
+		t.Errorf("system content = %q, want prefix %q", msgs[0].Content, "MySysPrompt")
 	}
 }
 

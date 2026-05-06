@@ -11,9 +11,7 @@ import (
 	"time"
 
 	"github.com/marcoantonios1/Agent-OS/internal/agents/builder"
-	"github.com/marcoantonios1/Agent-OS/internal/agents/comms"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/generic"
-	"github.com/marcoantonios1/Agent-OS/internal/agents/research"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/reviewer"
 	"github.com/marcoantonios1/Agent-OS/internal/app"
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
@@ -99,25 +97,16 @@ func main() {
 		builderCfg,
 	)
 
-	commsReg, _ := globalRegistry.Subset([]string{
-		"user_profile_read", "user_profile_update",
-		"reminder_set", "reminder_cancel", "reminder_list",
-		"email_list", "email_read", "email_search", "email_draft", "email_send",
-		"calendar_list", "calendar_read", "calendar_create", "calendar_update",
-	})
 	builderReg, _ := globalRegistry.Subset([]string{
 		"file_read", "file_write", "file_list", "shell_run",
 		"project_list", "project_load",
 	})
-	researchReg, _ := globalRegistry.Subset([]string{"web_search", "web_fetch"})
 	reviewerReg, _ := globalRegistry.Subset([]string{"file_read", "file_list", "shell_run"})
 
 	builderAgent := builder.New(llm, builderReg, store, projectStore, cfg.BuilderModel)
 
 	agents := map[router.Intent]router.Agent{
-		router.IntentComms:    comms.New(llm, commsReg, cfg.CommsModel),
 		router.IntentBuilder:  builderAgent,
-		router.IntentResearch: research.New(llm, researchReg, cfg.ResearchModel),
 		router.IntentReviewer: reviewer.New(llm, reviewerReg, cfg.BuilderModel),
 	}
 
