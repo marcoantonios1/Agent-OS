@@ -48,7 +48,7 @@ func turns(n int) []types.ConversationTurn {
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 func TestObserve_SkipsShortConversations(t *testing.T) {
-	llm := &mockLLM{content: `[{"key":"response_length","value":"brief"}]`}
+	llm := &mockLLM{content: "response_length=brief"}
 	store := memory.NewPersonalityStore()
 	a := profile.New(llm, store, "test-model")
 
@@ -65,9 +65,7 @@ func TestObserve_SkipsShortConversations(t *testing.T) {
 }
 
 func TestObserve_ExtractsAndPersistsSignals(t *testing.T) {
-	llm := &mockLLM{
-		content: `[{"key":"response_length","value":"brief"},{"key":"technical_depth","value":"high"}]`,
-	}
+	llm := &mockLLM{content: "response_length=brief\ntechnical_depth=high"}
 	store := memory.NewPersonalityStore()
 	a := profile.New(llm, store, "test-model")
 
@@ -98,23 +96,23 @@ func TestObserve_ExtractsAndPersistsSignals(t *testing.T) {
 	}
 }
 
-func TestObserve_HandlesInvalidJSON(t *testing.T) {
-	llm := &mockLLM{content: "not valid json at all"}
+func TestObserve_HandlesGarbageOutput(t *testing.T) {
+	// Prose with no KEY=VALUE lines produces zero signals but no error.
+	llm := &mockLLM{content: "I cannot determine any personality traits from this short exchange."}
 	store := memory.NewPersonalityStore()
 	a := profile.New(llm, store, "test-model")
 
-	// Invalid JSON must not return an error — it's treated as a no-op.
 	if err := a.Observe(context.Background(), "u1", turns(4)); err != nil {
-		t.Fatalf("expected nil error for bad JSON, got: %v", err)
+		t.Fatalf("expected nil error for unparseable output, got: %v", err)
 	}
 	p, _ := store.GetPersonality("u1")
 	if len(p.Signals) != 0 {
-		t.Errorf("expected 0 signals after parse failure, got %d", len(p.Signals))
+		t.Errorf("expected 0 signals from garbage output, got %d", len(p.Signals))
 	}
 }
 
-func TestObserve_HandlesEmptyJSONArray(t *testing.T) {
-	llm := &mockLLM{content: "[]"}
+func TestObserve_HandlesEmptyResponse(t *testing.T) {
+	llm := &mockLLM{content: ""}
 	store := memory.NewPersonalityStore()
 	a := profile.New(llm, store, "test-model")
 
@@ -123,12 +121,26 @@ func TestObserve_HandlesEmptyJSONArray(t *testing.T) {
 	}
 	p, _ := store.GetPersonality("u1")
 	if len(p.Signals) != 0 {
-		t.Errorf("expected 0 signals for empty array, got %d", len(p.Signals))
+		t.Errorf("expected 0 signals for empty response, got %d", len(p.Signals))
+	}
+}
+
+func TestObserve_StripsCodeFences(t *testing.T) {
+	llm := &mockLLM{content: "```\nresponse_length=brief\ntechnical_depth=high\n```"}
+	store := memory.NewPersonalityStore()
+	a := profile.New(llm, store, "test-model")
+
+	if err := a.Observe(context.Background(), "u1", turns(4)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	p, _ := store.GetPersonality("u1")
+	if len(p.Signals) != 2 {
+		t.Errorf("expected 2 signals after stripping fences, got %d", len(p.Signals))
 	}
 }
 
 func TestObserve_AccumulatesCountOnRepeatedCalls(t *testing.T) {
-	llm := &mockLLM{content: `[{"key":"response_length","value":"brief"}]`}
+	llm := &mockLLM{content: "response_length=brief"}
 	store := memory.NewPersonalityStore()
 	a := profile.New(llm, store, "test-model")
 
@@ -148,7 +160,7 @@ func TestObserve_AccumulatesCountOnRepeatedCalls(t *testing.T) {
 }
 
 func TestObserve_IsolatedByUser(t *testing.T) {
-	llm := &mockLLM{content: `[{"key":"response_length","value":"brief"}]`}
+	llm := &mockLLM{content: "response_length=brief"}
 	store := memory.NewPersonalityStore()
 	a := profile.New(llm, store, "test-model")
 
@@ -167,7 +179,7 @@ func TestObserve_IsolatedByUser(t *testing.T) {
 }
 
 func TestObserve_MinTurnsBoundary(t *testing.T) {
-	llm := &mockLLM{content: `[{"key":"response_length","value":"brief"}]`}
+	llm := &mockLLM{content: "response_length=brief"}
 	store := memory.NewPersonalityStore()
 	a := profile.New(llm, store, "test-model")
 

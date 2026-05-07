@@ -333,7 +333,7 @@ func (a *Agent) Handle(ctx context.Context, req types.AgentRequest) (types.Agent
 		projectName = project.Name
 	}
 
-	// Parse user profile injected by the router (may be absent).
+	// Parse user profile and personality injected by the router (may be absent).
 	var profile *sessions.UserProfile
 	if raw := req.Metadata["user.profile"]; raw != "" {
 		var p sessions.UserProfile
@@ -341,8 +341,15 @@ func (a *Agent) Handle(ctx context.Context, req types.AgentRequest) (types.Agent
 			profile = &p
 		}
 	}
+	var personality *sessions.PersonalityProfile
+	if raw := req.Metadata["user.personality"]; raw != "" {
+		var p sessions.PersonalityProfile
+		if err := json.Unmarshal([]byte(raw), &p); err == nil {
+			personality = &p
+		}
+	}
 
-	prompt := buildSystemPrompt(phase, spec, tasks, activeTask, projectName, projectID, profile)
+	prompt := buildSystemPrompt(phase, spec, tasks, activeTask, projectName, projectID, profile, personality)
 
 	msgs := make([]types.ConversationTurn, 0, len(req.History)+1)
 	msgs = append(msgs, types.ConversationTurn{Role: "system", Content: prompt})
@@ -418,7 +425,7 @@ func (a *Agent) Handle(ctx context.Context, req types.AgentRequest) (types.Agent
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-func buildSystemPrompt(phase, spec, tasks, activeTask, projectName, projectID string, profile *sessions.UserProfile) string {
+func buildSystemPrompt(phase, spec, tasks, activeTask, projectName, projectID string, profile *sessions.UserProfile, personality *sessions.PersonalityProfile) string {
 	var sb strings.Builder
 	sb.WriteString(basePrompt)
 
@@ -426,6 +433,7 @@ func buildSystemPrompt(phase, spec, tasks, activeTask, projectName, projectID st
 		sb.WriteString("\n\n## User context\nName: ")
 		sb.WriteString(profile.Name)
 	}
+	sb.WriteString(sessions.FormatPersonalityContext(personality))
 
 	if projectName != "" || projectID != "" {
 		sb.WriteString("\n\n## Current project\n")
@@ -563,7 +571,7 @@ func (a *Agent) runAutonomous(
 		spec := metaGet(meta, KeySpec, "")
 		taskJSON := metaGet(meta, KeyTasks, "")
 
-		prompt := buildSystemPrompt(phase, spec, taskJSON, activeTask, projectName, projectID, nil)
+		prompt := buildSystemPrompt(phase, spec, taskJSON, activeTask, projectName, projectID, nil, nil)
 
 		msgs := make([]types.ConversationTurn, 0, len(history)+2)
 		msgs = append(msgs, types.ConversationTurn{Role: "system", Content: prompt})

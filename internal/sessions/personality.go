@@ -1,6 +1,64 @@
 package sessions
 
-import "time"
+import (
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+)
+
+// confidenceThreshold is the minimum confidence required for a signal to be
+// included in the personality context block injected into agent system prompts.
+const confidenceThreshold = 0.6
+
+// signalLabels maps signal keys to human-readable labels for system prompts.
+var signalLabels = map[string]string{
+	SignalResponseLength:     "Response length preference",
+	SignalTechnicalDepth:     "Technical depth",
+	SignalCommunicationStyle: "Communication style",
+	SignalHumorTolerance:     "Humor tolerance",
+	SignalQuestionStyle:      "Question style",
+	SignalWorkingHours:       "Working hours",
+	SignalUrgencyPattern:     "Urgency pattern",
+	SignalTopicInterests:     "Topic interests",
+}
+
+// FormatPersonalityContext formats high-confidence personality signals into a
+// system-prompt block. Only signals with confidence >= confidenceThreshold are
+// included. Returns an empty string when profile is nil, has no signals, or has
+// no signals that clear the threshold — so callers can safely WriteString it.
+func FormatPersonalityContext(profile *PersonalityProfile) string {
+	if profile == nil || len(profile.Signals) == 0 {
+		return ""
+	}
+
+	// Collect qualifying signals in a deterministic order.
+	qualified := make([]PersonalitySignal, 0, len(profile.Signals))
+	for _, sig := range profile.Signals {
+		if sig.Confidence >= confidenceThreshold {
+			qualified = append(qualified, sig)
+		}
+	}
+	if len(qualified) == 0 {
+		return ""
+	}
+	sort.Slice(qualified, func(i, j int) bool { return qualified[i].Key < qualified[j].Key })
+
+	var sb strings.Builder
+	sb.WriteString("\n\n## User personality (inferred — treat as guidance, not rules)")
+	for _, sig := range qualified {
+		label, ok := signalLabels[sig.Key]
+		if !ok {
+			label = sig.Key
+		}
+		sb.WriteString("\n- ")
+		sb.WriteString(label)
+		sb.WriteString(": ")
+		sb.WriteString(sig.Value)
+		sb.WriteString(fmt.Sprintf(" (confidence: %.2g)", sig.Confidence))
+	}
+	return sb.String()
+}
 
 // PersonalitySignal is a single observed behavioural trait for a user.
 // Signals are derived automatically from conversation patterns — not set explicitly.

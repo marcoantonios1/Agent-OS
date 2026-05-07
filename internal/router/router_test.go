@@ -547,37 +547,37 @@ func TestClassifyInput_NoParts(t *testing.T) {
 	}
 }
 
-// ── unknown → comms routing ───────────────────────────────────────────────────
+// ── unknown → companion routing ──────────────────────────────────────────────
 
-func TestRoute_UnknownIntent_RoutesToComms(t *testing.T) {
+func TestRoute_UnknownIntent_RoutesToCompanion(t *testing.T) {
 	store := memory.NewStore()
-	comms := &stubAgent{output: "Hi! How can I help?"}
+	companion := &stubAgent{output: "Hi! How can I help?"}
 	r := New(
 		newStubClassifier(IntentUnknown),
-		map[Intent]Agent{IntentComms: comms},
+		map[Intent]Agent{Intent("companion"): companion},
 		store,
 		approval.NewMemoryStore(),
 	)
 
-	out, err := r.Route(context.Background(), newMsg("sess-img", "user-1", ""))
+	out, err := r.Route(context.Background(), newMsg("sess-unk", "user-1", "hey"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if out.Text != "Hi! How can I help?" {
-		t.Errorf("unknown should have routed to comms, got %q", out.Text)
+		t.Errorf("unknown should have routed to companion, got %q", out.Text)
 	}
-	if len(comms.calls) != 1 {
-		t.Errorf("expected comms agent called once, got %d", len(comms.calls))
+	if len(companion.calls) != 1 {
+		t.Errorf("expected companion agent called once, got %d", len(companion.calls))
 	}
 }
 
-func TestRoute_ImageMessage_RoutesToComms(t *testing.T) {
+func TestRoute_ImageMessage_RoutesToCompanion(t *testing.T) {
 	store := memory.NewStore()
 	comms := &stubAgent{output: "That looks like a cat!"}
 	r := New(
-		// Classifier sees "[image]" and returns unknown — comms handles it.
+		// Classifier sees "[image]" and returns unknown — companion handles it.
 		newStubClassifier(IntentUnknown),
-		map[Intent]Agent{IntentComms: comms},
+		map[Intent]Agent{Intent("companion"): comms},
 		store,
 		approval.NewMemoryStore(),
 	)
@@ -595,14 +595,14 @@ func TestRoute_ImageMessage_RoutesToComms(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if out.Text != "That looks like a cat!" {
-		t.Errorf("image message should route to comms, got %q", out.Text)
+		t.Errorf("image message should route to companion, got %q", out.Text)
 	}
-	// Comms agent should have the image in its history.
+	// Companion agent should have the image in its history.
 	if len(comms.calls) != 1 {
-		t.Fatalf("expected 1 call to comms, got %d", len(comms.calls))
+		t.Fatalf("expected 1 call to companion, got %d", len(comms.calls))
 	}
 	lastTurn := comms.calls[0].History[len(comms.calls[0].History)-1]
 	if len(lastTurn.Parts) != 1 || lastTurn.Parts[0].Type != "image" {
-		t.Errorf("comms agent should have received image in history, got %+v", lastTurn.Parts)
+		t.Errorf("companion agent should have received image in history, got %+v", lastTurn.Parts)
 	}
 }

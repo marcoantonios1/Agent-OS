@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
+	"github.com/marcoantonios1/Agent-OS/internal/sessions"
 	"github.com/marcoantonios1/Agent-OS/internal/tools"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
@@ -249,6 +250,99 @@ func TestHandleStream_ReturnsTokens(t *testing.T) {
 	}
 	if got != "streamed" {
 		t.Errorf("tokens = %q, want %q", got, "streamed")
+	}
+}
+
+// ── personality injection ─────────────────────────────────────────────────────
+
+// personalityJSON serialises a PersonalityProfile to JSON the same way the
+// router does, so we can inject it directly into req.Metadata.
+func personalityJSON(t *testing.T, sigs []sessions.PersonalitySignal) string {
+	t.Helper()
+	p := sessions.PersonalityProfile{UserID: "u1", Signals: sigs}
+	b, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("marshal personality: %v", err)
+	}
+	return string(b)
+}
+
+func TestBuildDynamicPrompt_PersonalityBlockAppended(t *testing.T) {
+	ag, _ := New(validConfig(), tools.NewRegistry(), &fakeLLM{})
+
+	req := types.AgentRequest{
+		Metadata: map[string]string{
+			"user.personality": personalityJSON(t, []sessions.PersonalitySignal{
+				{Key: sessions.SignalResponseLength, Value: "brief", Confidence: 0.9},
+				{Key: sessions.SignalTechnicalDepth, Value: "high", Confidence: 0.8},
+			}),
+		},
+	}
+	prompt := ag.buildDynamicPrompt(req)
+
+	if !strings.Contains(prompt, "## User personality") {
+		t.Error("expected personality block header in system prompt")
+	}
+	if !strings.Contains(prompt, "Response length preference") {
+		t.Error("expected response_length signal in system prompt")
+	}
+	if !strings.Contains(prompt, "Technical depth") {
+		t.Error("expected technical_depth signal in system prompt")
+	}
+}
+
+func TestBuildDynamicPrompt_LowConfidenceSignalsExcluded(t *testing.T) {
+	ag, _ := New(validConfig(), tools.NewRegistry(), &fakeLLM{})
+
+	req := types.AgentRequest{
+		Metadata: map[string]string{
+			"user.personality": personalityJSON(t, []sessions.PersonalitySignal{
+				{Key: sessions.SignalResponseLength, Value: "brief", Confidence: 0.9},  // included
+				{Key: sessions.SignalHumorTolerance, Value: "high", Confidence: 0.3},   // excluded
+			}),
+		},
+	}
+	prompt := ag.buildDynamicPrompt(req)
+
+	if !strings.Contains(prompt, "Response length preference") {
+		t.Error("high-confidence signal must appear in prompt")
+	}
+	if strings.Contains(prompt, "Humor tolerance") {
+		t.Error("low-confidence signal must not appear in prompt")
+	}
+}
+
+func TestBuildDynamicPrompt_NoPersonalityMetadata_PromptUnchanged(t *testing.T) {
+	ag, _ := New(validConfig(), tools.NewRegistry(), &fakeLLM{})
+
+	withoutPersonality := ag.buildDynamicPrompt(types.AgentRequest{})
+	if strings.Contains(withoutPersonality, "## User personality") {
+		t.Error("personality block must not appear when no metadata is set")
+	}
+}
+
+func TestBuildDynamicPrompt_PersonalityAppearsBeforeCurrentTime(t *testing.T) {
+	ag, _ := New(validConfig(), tools.NewRegistry(), &fakeLLM{})
+
+	req := types.AgentRequest{
+		Metadata: map[string]string{
+			"user.personality": personalityJSON(t, []sessions.PersonalitySignal{
+				{Key: sessions.SignalTechnicalDepth, Value: "high", Confidence: 0.8},
+			}),
+		},
+	}
+	prompt := ag.buildDynamicPrompt(req)
+
+	personalityIdx := strings.Index(prompt, "## User personality")
+	timeIdx := strings.Index(prompt, "## Current time")
+	if personalityIdx < 0 {
+		t.Fatal("personality block not found")
+	}
+	if timeIdx < 0 {
+		t.Fatal("current time block not found")
+	}
+	if personalityIdx > timeIdx {
+		t.Error("personality block must appear before current time block")
 	}
 }
 

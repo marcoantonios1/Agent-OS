@@ -162,6 +162,13 @@ func (a *Agent) buildDynamicPrompt(req types.AgentRequest) string {
 		}
 	}
 
+	if raw := req.Metadata["user.personality"]; raw != "" {
+		var p sessions.PersonalityProfile
+		if err := json.Unmarshal([]byte(raw), &p); err == nil {
+			sb.WriteString(sessions.FormatPersonalityContext(&p))
+		}
+	}
+
 	now := time.Now()
 	sb.WriteString("\n\n## Current time\nLocal date/time (use this UTC offset for ALL calendar timestamps): ")
 	sb.WriteString(now.Format(time.RFC3339))

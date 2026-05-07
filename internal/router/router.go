@@ -62,7 +62,11 @@ type Router struct {
 	// ProfileObserver is optional. When set, it is called in a goroutine after
 	// each completed turn to extract and persist personality signals for the user.
 	ProfileObserver PersonalityObserver
-	log             *slog.Logger
+	// Personality is optional. When set, the user's PersonalityProfile is loaded
+	// on every dispatch and injected into AgentRequest.Metadata under
+	// "user.personality" so agents can adapt their tone without any per-agent code.
+	Personality sessions.PersonalityStore
+	log         *slog.Logger
 }
 
 // New returns a Router with the given classifier, agents, session store, and
@@ -206,8 +210,7 @@ func (r *Router) dispatchAll(
 	}
 
 	if len(valid) == 0 {
-		// System prompt says "unknown is sent to comms by default"; honour that.
-		return r.dispatch(ctx, msg, IntentComms, history, sessionMeta)
+		return r.dispatch(ctx, msg, Intent("companion"), history, sessionMeta)
 	}
 
 	// Single intent: preserve existing behaviour, including error propagation.
@@ -284,6 +287,13 @@ func (r *Router) dispatch(
 			}
 		}
 	}
+	if r.Personality != nil && msg.UserID != "" {
+		if personality, err := r.Personality.GetPersonality(msg.UserID); err == nil {
+			if b, err := json.Marshal(personality); err == nil {
+				agentMeta["user.personality"] = string(b)
+			}
+		}
+	}
 
 	start := time.Now()
 	resp, err := agent.Handle(ctx, types.AgentRequest{
@@ -355,8 +365,7 @@ func (r *Router) RouteStream(ctx context.Context, msg types.InboundMessage) (<-c
 
 	switch {
 	case len(valid) == 0:
-		// System prompt says "unknown is sent to comms by default"; honour that.
-		rawCh, err = r.streamDispatch(ctx, msg, IntentComms, history, sess.Metadata)
+		rawCh, err = r.streamDispatch(ctx, msg, Intent("companion"), history, sess.Metadata)
 		if err != nil {
 			return nil, fmt.Errorf("router: stream dispatch: %w", err)
 		}
@@ -431,6 +440,13 @@ func (r *Router) streamDispatch(
 		if profile, err := r.Users.GetUser(msg.UserID); err == nil {
 			if b, err := json.Marshal(profile); err == nil {
 				agentMeta["user.profile"] = string(b)
+			}
+		}
+	}
+	if r.Personality != nil && msg.UserID != "" {
+		if personality, err := r.Personality.GetPersonality(msg.UserID); err == nil {
+			if b, err := json.Marshal(personality); err == nil {
+				agentMeta["user.personality"] = string(b)
 			}
 		}
 	}
