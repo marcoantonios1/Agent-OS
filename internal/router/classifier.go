@@ -99,6 +99,13 @@ The valid intent values are:
                Examples: "Save a note about today's meeting", "Find my note on the project plan",
                          "What notes do I have?", "Update my note about Alice", "Write a journal entry"
 
+- "profile_query" – The user wants to know what the system has learned about them, see their inferred
+               personality profile, or correct something about it.
+               Examples: "What do you know about me?", "What's my personality profile?",
+                         "What have you learned about me?", "Do you know my preferences?",
+                         "What do you think of me?", "Tell me about myself",
+                         "You've got me wrong", "That's not right about me"
+
 - "unknown"  – use this when no other intent fits. Unknown messages are sent to the companion agent by default.
 
 ## Compound requests

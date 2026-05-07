@@ -1,0 +1,11 @@
+id: profile_query
+model: gemma4:26b
+max_tokens: 2048
+intents:
+  - profile
+  - profile_query
+  - personality
+  - know_me
+  - about_me
+skills:
+  - user_profile_read
