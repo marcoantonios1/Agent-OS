@@ -92,10 +92,11 @@ type errorResponse struct {
 
 // Handler is the HTTP handler for the web chat channel.
 type Handler struct {
-	dispatcher Dispatcher
-	readiness  ReadinessChecker // may be nil
-	log        *slog.Logger
-	handler    http.Handler
+	dispatcher      Dispatcher
+	readiness       ReadinessChecker // may be nil
+	PersonalityStore sessions.PersonalityStore // optional; enables GET /debug/personality
+	log             *slog.Logger
+	handler         http.Handler
 }
 
 // NewHandler registers all routes and wraps them with middleware.
@@ -112,11 +113,32 @@ func NewHandler(d Dispatcher, checker ReadinessChecker) *Handler {
 	mux.HandleFunc("POST /v1/chat/stream", h.chatStream)
 	mux.HandleFunc("GET /healthz", h.healthz)
 	mux.HandleFunc("GET /readyz", h.readyz)
+	mux.HandleFunc("GET /debug/personality", h.debugPersonality)
 
 	// Middleware order (outermost first):
 	//   recovery → requestID → logging → mux
 	h.handler = recovery(requestIDMiddleware(h.loggingMiddleware(mux)))
 	return h
+}
+
+// debugPersonality returns the personality profile for a user as JSON.
+// Requires ?user_id=<id>. Returns 501 when no PersonalityStore is wired.
+func (h *Handler) debugPersonality(w http.ResponseWriter, r *http.Request) {
+	if h.PersonalityStore == nil {
+		writeError(w, http.StatusNotImplemented, "personality store not configured (set SQLITE_PATH)")
+		return
+	}
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		writeError(w, http.StatusBadRequest, "user_id query param required")
+		return
+	}
+	profile, err := h.PersonalityStore.GetPersonality(userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, profile)
 }
 
 // ServeHTTP implements http.Handler.

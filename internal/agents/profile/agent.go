@@ -5,7 +5,6 @@ package profile
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -19,35 +18,36 @@ import (
 // will call the LLM. Short exchanges don't carry enough signal to be useful.
 const minTurns = 3
 
-const observePrompt = `You are a personality-signal extractor. Given a conversation between a user and an AI assistant, identify observable behavioural traits and output them as a JSON array.
+const observePrompt = `You are analysing a conversation transcript to identify behavioural traits of the USER.
 
-Each signal object must have exactly two fields:
-- "key":   one of the allowed keys listed below
-- "value": the observed value for that key
+For each observable trait, output exactly one line in this format:
+KEY=VALUE
 
-Allowed keys and values:
-- response_length:     "brief" | "detailed" | "verbose"
-- technical_depth:     "low" | "medium" | "high"
-- communication_style: "formal" | "casual" | "direct"
-- humor_tolerance:     "none" | "light" | "high"
-- question_style:      "asks_followup" | "assumes" | "guesses"
-- working_hours:       "morning" | "evening" | "night" | "mixed"
-- urgency_pattern:     "high" | "medium" | "low"
-- topic_interests:     comma-separated list of topics the user showed genuine interest in
+Allowed keys and their allowed values (only use these exact strings):
+response_length=brief|detailed|verbose
+technical_depth=low|medium|high
+communication_style=formal|casual|direct
+humor_tolerance=none|light|high
+question_style=asks_followup|assumes|guesses
+working_hours=morning|evening|night|mixed
+urgency_pattern=high|medium|low
+topic_interests=<comma-separated topics>
 
 Rules:
-- Only include signals you can observe with confidence from this specific conversation.
-- If you have no clear evidence for a signal, omit it entirely.
-- Output ONLY valid JSON — no prose, no markdown fences, no explanation.
-- If no signals are detectable, output an empty array: []
+- Only output traits you can observe with confidence from the transcript.
+- If there is no clear evidence for a trait, do not include it.
+- Output ONLY the KEY=VALUE lines, nothing else — no headers, no explanation, no blank lines.
+- If no traits are detectable, output nothing at all.
 
 Example output:
-[{"key":"response_length","value":"brief"},{"key":"technical_depth","value":"high"}]`
+response_length=brief
+technical_depth=high
+topic_interests=golang,concurrency`
 
-// signal is the minimal JSON shape the LLM returns.
+// signal is a key=value personality trait extracted from the LLM response.
 type signal struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
+	Key   string
+	Value string
 }
 
 // Agent analyses conversation history and persists personality signals.
@@ -78,16 +78,30 @@ func (a *Agent) Observe(ctx context.Context, userID string, history []types.Conv
 		return nil
 	}
 
-	// Append an explicit user trigger so the model always has a fresh user turn
-	// to respond to. Without this, a history ending on an assistant turn causes
-	// many models to return empty content (nothing left to generate).
-	messages := make([]types.ConversationTurn, 0, len(history)+2)
-	messages = append(messages, types.ConversationTurn{Role: "system", Content: observePrompt})
-	messages = append(messages, history...)
-	messages = append(messages, types.ConversationTurn{
-		Role:    "user",
-		Content: "Output the personality signals JSON array now. Output ONLY the JSON array, no other text.",
-	})
+	// Format the conversation as plain text inside a single user message.
+	// Passing the conversation as real chat turns causes models to treat themselves
+	// as a participant continuing the chat rather than an external analyser, which
+	// results in empty or conversational (non-JSON) completions.
+	var transcript strings.Builder
+	transcript.WriteString("Analyse the following conversation transcript and output the personality signals JSON array.\n\n<transcript>\n")
+	for _, turn := range history {
+		switch turn.Role {
+		case "user":
+			transcript.WriteString("User: ")
+			transcript.WriteString(turn.Content)
+			transcript.WriteString("\n")
+		case "assistant":
+			transcript.WriteString("Assistant: ")
+			transcript.WriteString(turn.Content)
+			transcript.WriteString("\n")
+		}
+	}
+	transcript.WriteString("</transcript>")
+
+	messages := []types.ConversationTurn{
+		{Role: "system", Content: observePrompt},
+		{Role: "user", Content: transcript.String()},
+	}
 
 	resp, err := a.llm.Complete(ctx, costguard.CompletionRequest{
 		Model:     a.model,
@@ -98,18 +112,14 @@ func (a *Agent) Observe(ctx context.Context, userID string, history []types.Conv
 		return fmt.Errorf("profile observe: llm: %w", err)
 	}
 
-	content := stripFences(strings.TrimSpace(resp.Content))
+	content := strings.TrimSpace(resp.Content)
 	if content == "" {
-		a.log.Debug("profile observe: empty LLM response, skipping", "user_id", userID)
+		a.log.Warn("profile observe: empty LLM response",
+			"user_id", userID, "model", a.model, "turns", len(history))
 		return nil
 	}
 
-	var signals []signal
-	if err := json.Unmarshal([]byte(content), &signals); err != nil {
-		a.log.Warn("profile observe: could not parse LLM response",
-			"user_id", userID, "response", content, "error", err)
-		return nil
-	}
+	signals := parseKeyValue(content)
 
 	for _, s := range signals {
 		if upsertErr := a.store.UpsertSignal(userID, sessions.PersonalitySignal{
@@ -120,22 +130,38 @@ func (a *Agent) Observe(ctx context.Context, userID string, history []types.Conv
 				"user_id", userID, "key", s.Key, "error", upsertErr)
 		}
 	}
+	if len(signals) > 0 {
+		a.log.Info("profile observe: signals stored", "user_id", userID, "count", len(signals))
+	}
 	return nil
 }
 
-// stripFences removes markdown code fences (```json...``` or ```...```) that
-// some models wrap their JSON output in despite being told not to.
-func stripFences(s string) string {
-	if !strings.HasPrefix(s, "```") {
-		return s
+// parseKeyValue parses the LLM's KEY=VALUE line format into signals.
+// Lines that don't contain "=" are silently skipped so stray prose doesn't crash parsing.
+func parseKeyValue(s string) []signal {
+	// Strip markdown code fences if the model wrapped its output anyway.
+	if strings.HasPrefix(s, "```") {
+		if idx := strings.Index(s, "\n"); idx >= 0 {
+			s = s[idx+1:]
+		}
+		if idx := strings.LastIndex(s, "```"); idx >= 0 {
+			s = s[:idx]
+		}
+		s = strings.TrimSpace(s)
 	}
-	lines := strings.SplitN(s, "\n", 2)
-	if len(lines) < 2 {
-		return s
+
+	var out []signal
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		idx := strings.IndexByte(line, '=')
+		if idx <= 0 {
+			continue
+		}
+		key := strings.TrimSpace(line[:idx])
+		val := strings.TrimSpace(line[idx+1:])
+		if key != "" && val != "" {
+			out = append(out, signal{Key: key, Value: val})
+		}
 	}
-	body := lines[1]
-	if idx := strings.LastIndex(body, "```"); idx >= 0 {
-		body = body[:idx]
-	}
-	return strings.TrimSpace(body)
+	return out
 }
