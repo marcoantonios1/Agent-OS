@@ -62,7 +62,11 @@ type Router struct {
 	// ProfileObserver is optional. When set, it is called in a goroutine after
 	// each completed turn to extract and persist personality signals for the user.
 	ProfileObserver PersonalityObserver
-	log             *slog.Logger
+	// Personality is optional. When set, the user's PersonalityProfile is loaded
+	// on every dispatch and injected into AgentRequest.Metadata under
+	// "user.personality" so agents can adapt their tone without any per-agent code.
+	Personality sessions.PersonalityStore
+	log         *slog.Logger
 }
 
 // New returns a Router with the given classifier, agents, session store, and
@@ -284,6 +288,13 @@ func (r *Router) dispatch(
 			}
 		}
 	}
+	if r.Personality != nil && msg.UserID != "" {
+		if personality, err := r.Personality.GetPersonality(msg.UserID); err == nil {
+			if b, err := json.Marshal(personality); err == nil {
+				agentMeta["user.personality"] = string(b)
+			}
+		}
+	}
 
 	start := time.Now()
 	resp, err := agent.Handle(ctx, types.AgentRequest{
@@ -431,6 +442,13 @@ func (r *Router) streamDispatch(
 		if profile, err := r.Users.GetUser(msg.UserID); err == nil {
 			if b, err := json.Marshal(profile); err == nil {
 				agentMeta["user.profile"] = string(b)
+			}
+		}
+	}
+	if r.Personality != nil && msg.UserID != "" {
+		if personality, err := r.Personality.GetPersonality(msg.UserID); err == nil {
+			if b, err := json.Marshal(personality); err == nil {
+				agentMeta["user.personality"] = string(b)
 			}
 		}
 	}

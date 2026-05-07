@@ -131,6 +131,7 @@ func main() {
 	r.Users = userStore
 	r.BuilderNotifier = web.ReminderNotifier{} // web: logs only; Discord overrides below
 	r.ProfileObserver = profile.New(llm, personalityStore, cfg.ProfileModel)
+	r.Personality = personalityStore
 	builderAgent.SetSubAgentCaller(r)
 	reminderWorker.SetDispatcher(r)
 	h := web.NewHandler(r, llm)
