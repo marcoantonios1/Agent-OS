@@ -1,5 +1,5 @@
 id: profile_query
-model: claude-sonnet-4-6
+model: gemma4:26b
 max_tokens: 2048
 intents:
   - profile
