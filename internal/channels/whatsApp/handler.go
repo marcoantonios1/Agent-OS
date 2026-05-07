@@ -298,6 +298,7 @@ func normaliseJID(jid watypes.JID) string {
 
 // extractText returns the plain text from a WhatsApp message proto, or ""
 // for media, stickers, reactions, and other non-text message types.
+// Captions on image, video, and document messages are treated as the message text.
 func extractText(msg *waE2E.Message) string {
 	if msg == nil {
 		return ""
@@ -307,6 +308,15 @@ func extractText(msg *waE2E.Message) string {
 	}
 	if ext := msg.GetExtendedTextMessage(); ext != nil {
 		return ext.GetText()
+	}
+	if img := msg.GetImageMessage(); img != nil {
+		return img.GetCaption()
+	}
+	if vid := msg.GetVideoMessage(); vid != nil {
+		return vid.GetCaption()
+	}
+	if doc := msg.GetDocumentMessage(); doc != nil {
+		return doc.GetCaption()
 	}
 	return ""
 }
