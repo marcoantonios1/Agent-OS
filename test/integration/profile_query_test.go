@@ -91,10 +91,12 @@ func TestProfileQuery_RoutesToProfileQueryAgent(t *testing.T) {
 		t.Fatal("expected non-empty response from profile_query agent")
 	}
 
-	// Find the agent's system prompt (contains SYSTEM.md content).
+	// Find the agent's system prompt — identified by the SYSTEM.md heading.
+	// The classifier prompt also mentions "personality profile" so we match on
+	// the markdown heading that only appears in agents/profile_query/SYSTEM.md.
 	var agentPrompt string
 	for _, p := range capturedSystemPrompts {
-		if strings.Contains(p, "Profile Query Agent") || strings.Contains(p, "personality profile") {
+		if strings.Contains(p, "# Profile Query Agent") {
 			agentPrompt = p
 			break
 		}
