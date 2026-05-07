@@ -210,8 +210,7 @@ func (r *Router) dispatchAll(
 	}
 
 	if len(valid) == 0 {
-		// System prompt says "unknown is sent to comms by default"; honour that.
-		return r.dispatch(ctx, msg, IntentComms, history, sessionMeta)
+		return r.dispatch(ctx, msg, Intent("companion"), history, sessionMeta)
 	}
 
 	// Single intent: preserve existing behaviour, including error propagation.
@@ -366,8 +365,7 @@ func (r *Router) RouteStream(ctx context.Context, msg types.InboundMessage) (<-c
 
 	switch {
 	case len(valid) == 0:
-		// System prompt says "unknown is sent to comms by default"; honour that.
-		rawCh, err = r.streamDispatch(ctx, msg, IntentComms, history, sess.Metadata)
+		rawCh, err = r.streamDispatch(ctx, msg, Intent("companion"), history, sess.Metadata)
 		if err != nil {
 			return nil, fmt.Errorf("router: stream dispatch: %w", err)
 		}

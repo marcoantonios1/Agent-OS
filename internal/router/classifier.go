@@ -88,15 +88,18 @@ The valid intent values are:
                Examples: "I have a headache and fever", "What does ibuprofen interact with?",
                          "What could cause lower back pain?", "Explain my blood test results"
 
-- "companion" – The user wants to talk, vent, reflect, or think something through — not a task, just a conversation.
+- "companion" – The user wants to talk, vent, reflect, or think something through — casual conversation with no specific task.
+               Also use this for light personal questions, small talk, or anything that is not a task for another agent.
                Examples: "I want to talk", "I've been feeling off lately", "Can we just chat?",
-                         "I need to vent", "What do you think about my situation?"
+                         "I need to vent", "What do you think about my situation?",
+                         "What should I have for lunch?", "Tell me something interesting",
+                         "I'm bored", "How's your day?"
 
 - "notes"    – Saving, finding, updating, or summarising personal notes and documents.
                Examples: "Save a note about today's meeting", "Find my note on the project plan",
                          "What notes do I have?", "Update my note about Alice", "Write a journal entry"
 
-- "unknown"  – it is sent to the companion agent by default, which can handle general conversation and fallback responses.
+- "unknown"  – use this when no other intent fits. Unknown messages are sent to the companion agent by default.
 
 ## Compound requests
 If the user asks for multiple distinct tasks that belong to different agents,
