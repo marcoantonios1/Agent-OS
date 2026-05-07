@@ -13,6 +13,12 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
 
+// PersonalityObserver is an optional hook invoked asynchronously after each
+// completed conversation turn. Implementations must not block the caller.
+type PersonalityObserver interface {
+	Observe(ctx context.Context, userID string, history []types.ConversationTurn) error
+}
+
 const unknownIntentReply = "I'm not sure how to help with that — could you rephrase or give me a bit more detail?"
 
 // responseSeparator is placed between merged agent responses in compound replies.
@@ -53,6 +59,9 @@ type Router struct {
 	// AgentRequest so the Builder Agent can send out-of-band progress
 	// notifications (e.g. "Task 2/5 complete") to the user's channel.
 	BuilderNotifier types.ProgressNotifier
+	// ProfileObserver is optional. When set, it is called in a goroutine after
+	// each completed turn to extract and persist personality signals for the user.
+	ProfileObserver PersonalityObserver
 	log             *slog.Logger
 }
 
@@ -133,6 +142,7 @@ func (r *Router) Route(ctx context.Context, msg types.InboundMessage) (types.Out
 	if persistErr := r.persistTurns(msg.SessionID, msg.Text, agentResp.Output); persistErr != nil {
 		r.log.WarnContext(ctx, "failed to persist turns", "session_id", msg.SessionID, "error", persistErr)
 	}
+	r.observePersonality(msg.UserID, history, agentResp.Output)
 
 	if dispatchErr != nil {
 		return types.OutboundMessage{}, fmt.Errorf("router: dispatch: %w", dispatchErr)
@@ -380,12 +390,14 @@ func (r *Router) RouteStream(ctx context.Context, msg types.InboundMessage) (<-c
 					r.log.WarnContext(ctx, "failed to persist turns (disconnect)",
 						"session_id", msg.SessionID, "error", err)
 				}
+				r.observePersonality(msg.UserID, history, sb.String())
 				return
 			}
 		}
 		if err := r.persistTurns(msg.SessionID, msg.Text, sb.String()); err != nil {
 			r.log.WarnContext(ctx, "failed to persist turns", "session_id", msg.SessionID, "error", err)
 		}
+		r.observePersonality(msg.UserID, history, sb.String())
 	}()
 
 	return out, nil
@@ -523,4 +535,24 @@ func (r *Router) persistTurns(sessionID, userText, assistantText string) error {
 		return fmt.Errorf("append assistant turn: %w", err)
 	}
 	return nil
+}
+
+// observePersonality calls ProfileObserver.Observe in a dedicated goroutine so
+// that personality analysis never delays the response path. history must include
+// the current user turn; assistantText is the reply that was just persisted.
+// No-ops when ProfileObserver is nil or userID is empty.
+func (r *Router) observePersonality(userID string, history []types.ConversationTurn, assistantText string) {
+	if r.ProfileObserver == nil || userID == "" {
+		return
+	}
+	fullHistory := append(append([]types.ConversationTurn(nil), history...),
+		types.ConversationTurn{Role: "assistant", Content: assistantText},
+	)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := r.ProfileObserver.Observe(ctx, userID, fullHistory); err != nil {
+			r.log.Warn("profile observe failed", "user_id", userID, "error", err)
+		}
+	}()
 }

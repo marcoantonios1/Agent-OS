@@ -12,6 +12,7 @@ import (
 
 	"github.com/marcoantonios1/Agent-OS/internal/agents/builder"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/generic"
+	"github.com/marcoantonios1/Agent-OS/internal/agents/profile"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/reviewer"
 	"github.com/marcoantonios1/Agent-OS/internal/app"
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
@@ -77,8 +78,6 @@ func main() {
 		personalityStore = memory.NewPersonalityStore()
 		slog.Warn("SQLITE_PATH not set — using in-memory stores (data lost on restart)")
 	}
-	_ = personalityStore // will be passed to the personality engine in a follow-up
-
 	approvals := approval.NewMemoryStore()
 
 	llm := costguard.New(cfg.CostguardURL, cfg.CostguardAPIKey)
@@ -131,6 +130,7 @@ func main() {
 	r := router.New(classifier, agents, store, approvals)
 	r.Users = userStore
 	r.BuilderNotifier = web.ReminderNotifier{} // web: logs only; Discord overrides below
+	r.ProfileObserver = profile.New(llm, personalityStore, cfg.ProfileModel)
 	builderAgent.SetSubAgentCaller(r)
 	reminderWorker.SetDispatcher(r)
 	h := web.NewHandler(r, llm)
