@@ -390,12 +390,14 @@ func (r *Router) RouteStream(ctx context.Context, msg types.InboundMessage) (<-c
 					r.log.WarnContext(ctx, "failed to persist turns (disconnect)",
 						"session_id", msg.SessionID, "error", err)
 				}
+				r.observePersonality(msg.UserID, history, sb.String())
 				return
 			}
 		}
 		if err := r.persistTurns(msg.SessionID, msg.Text, sb.String()); err != nil {
 			r.log.WarnContext(ctx, "failed to persist turns", "session_id", msg.SessionID, "error", err)
 		}
+		r.observePersonality(msg.UserID, history, sb.String())
 	}()
 
 	return out, nil

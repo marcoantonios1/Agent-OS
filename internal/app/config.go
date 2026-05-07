@@ -55,6 +55,7 @@ type Config struct {
 	BuilderModel    string
 	ResearchModel   string
 	ClassifierModel string
+	ProfileModel    string
 
 	// ── Google (Gmail + Calendar) ─────────────────────────────────────────────
 
