@@ -13,6 +13,12 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
 
+// PersonalityObserver is an optional hook invoked asynchronously after each
+// completed conversation turn. Implementations must not block the caller.
+type PersonalityObserver interface {
+	Observe(ctx context.Context, userID string, history []types.ConversationTurn) error
+}
+
 const unknownIntentReply = "I'm not sure how to help with that — could you rephrase or give me a bit more detail?"
 
 // responseSeparator is placed between merged agent responses in compound replies.
@@ -53,6 +59,9 @@ type Router struct {
 	// AgentRequest so the Builder Agent can send out-of-band progress
 	// notifications (e.g. "Task 2/5 complete") to the user's channel.
 	BuilderNotifier types.ProgressNotifier
+	// ProfileObserver is optional. When set, it is called in a goroutine after
+	// each completed turn to extract and persist personality signals for the user.
+	ProfileObserver PersonalityObserver
 	log             *slog.Logger
 }
 
