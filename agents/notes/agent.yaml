@@ -1,5 +1,5 @@
 id: notes
-model: claude-sonnet-4-6
+model: gemma4:26b
 max_tokens: 4096
 intents:
   - notes
