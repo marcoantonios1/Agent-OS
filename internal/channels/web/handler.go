@@ -15,6 +15,7 @@ import (
 
 	"github.com/marcoantonios1/Agent-OS/internal/attachments"
 	"github.com/marcoantonios1/Agent-OS/internal/observability"
+	"github.com/marcoantonios1/Agent-OS/internal/sessions"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
 

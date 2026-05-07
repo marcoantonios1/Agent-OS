@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/sessions"
@@ -77,9 +78,16 @@ func (a *Agent) Observe(ctx context.Context, userID string, history []types.Conv
 		return nil
 	}
 
-	messages := make([]types.ConversationTurn, 0, len(history)+1)
+	// Append an explicit user trigger so the model always has a fresh user turn
+	// to respond to. Without this, a history ending on an assistant turn causes
+	// many models to return empty content (nothing left to generate).
+	messages := make([]types.ConversationTurn, 0, len(history)+2)
 	messages = append(messages, types.ConversationTurn{Role: "system", Content: observePrompt})
 	messages = append(messages, history...)
+	messages = append(messages, types.ConversationTurn{
+		Role:    "user",
+		Content: "Output the personality signals JSON array now. Output ONLY the JSON array, no other text.",
+	})
 
 	resp, err := a.llm.Complete(ctx, costguard.CompletionRequest{
 		Model:     a.model,
@@ -90,10 +98,16 @@ func (a *Agent) Observe(ctx context.Context, userID string, history []types.Conv
 		return fmt.Errorf("profile observe: llm: %w", err)
 	}
 
+	content := stripFences(strings.TrimSpace(resp.Content))
+	if content == "" {
+		a.log.Debug("profile observe: empty LLM response, skipping", "user_id", userID)
+		return nil
+	}
+
 	var signals []signal
-	if err := json.Unmarshal([]byte(resp.Content), &signals); err != nil {
+	if err := json.Unmarshal([]byte(content), &signals); err != nil {
 		a.log.Warn("profile observe: could not parse LLM response",
-			"user_id", userID, "response", resp.Content, "error", err)
+			"user_id", userID, "response", content, "error", err)
 		return nil
 	}
 
@@ -107,4 +121,21 @@ func (a *Agent) Observe(ctx context.Context, userID string, history []types.Conv
 		}
 	}
 	return nil
+}
+
+// stripFences removes markdown code fences (```json...``` or ```...```) that
+// some models wrap their JSON output in despite being told not to.
+func stripFences(s string) string {
+	if !strings.HasPrefix(s, "```") {
+		return s
+	}
+	lines := strings.SplitN(s, "\n", 2)
+	if len(lines) < 2 {
+		return s
+	}
+	body := lines[1]
+	if idx := strings.LastIndex(body, "```"); idx >= 0 {
+		body = body[:idx]
+	}
+	return strings.TrimSpace(body)
 }
