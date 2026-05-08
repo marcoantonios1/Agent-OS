@@ -68,5 +68,10 @@ func loadConfig(dir string) (Config, error) {
 	}
 	cfg.SystemPrompt = string(sysData)
 
+	soulData, err := os.ReadFile(filepath.Join(dir, "SOUL.md"))
+	if err == nil {
+		cfg.SystemPrompt += "\n\n" + string(soulData)
+	}
+
 	return cfg, nil
 }
