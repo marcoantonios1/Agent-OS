@@ -133,6 +133,30 @@ type Config struct {
 	// is lost on restart (acceptable for local development without any config).
 	// Env: SQLITE_PATH (default: "" — in-memory)
 	SQLitePath string
+
+	// ── Heartbeat worker ──────────────────────────────────────────────────────
+
+	// HeartbeatInterval is how often the heartbeat worker ticks.
+	// Zero (default) disables the worker entirely.
+	// Env: HEARTBEAT_INTERVAL (e.g. "30m", "1h") — disabled when unset
+	HeartbeatInterval time.Duration
+
+	// HeartbeatUserID is the user the heartbeat runs as.
+	// Env: HEARTBEAT_USER_ID (default: "u1")
+	HeartbeatUserID string
+
+	// HeartbeatSessionID is the dedicated session for heartbeat history.
+	// Env: HEARTBEAT_SESSION_ID (default: "heartbeat")
+	HeartbeatSessionID string
+
+	// HeartbeatChannel is the channel notifier used to deliver responses.
+	// Env: HEARTBEAT_CHANNEL (default: "discord") — valid: discord, whatsapp, web
+	HeartbeatChannel string
+
+	// HeartbeatPrompt is the fallback prompt sent to the router on each tick.
+	// Overridden by HEARTBEAT.md in the workspace directory when present.
+	// Env: HEARTBEAT_PROMPT
+	HeartbeatPrompt string
 }
 
 // Load reads configuration from the given .env file (if it exists) and then
@@ -177,6 +201,12 @@ func Load(envFile string) (*Config, error) {
 		WhatsAppAllowedJID: os.Getenv("WHATSAPP_ALLOWED_JID"),
 
 		SQLitePath: os.Getenv("SQLITE_PATH"),
+
+		HeartbeatInterval:  envDuration("HEARTBEAT_INTERVAL", 0),
+		HeartbeatUserID:    envOr("HEARTBEAT_USER_ID", "u1"),
+		HeartbeatSessionID: envOr("HEARTBEAT_SESSION_ID", "heartbeat"),
+		HeartbeatChannel:   envOr("HEARTBEAT_CHANNEL", "discord"),
+		HeartbeatPrompt:    os.Getenv("HEARTBEAT_PROMPT"),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -225,6 +255,11 @@ func (c *Config) SearchConfigured() bool {
 // A single token covers both Gmail and Google Calendar.
 func (c *Config) GoogleConfigured() bool {
 	return c.GoogleClientID != "" && c.GoogleClientSecret != "" && c.GoogleRefreshToken != ""
+}
+
+// HeartbeatConfigured reports whether the heartbeat worker should start.
+func (c *Config) HeartbeatConfigured() bool {
+	return c.HeartbeatInterval > 0
 }
 
 // MicrosoftConfigured reports whether the Microsoft OAuth2 credentials are present.
