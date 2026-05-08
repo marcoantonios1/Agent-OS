@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
+	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/sessions"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
@@ -66,7 +67,13 @@ type Router struct {
 	// on every dispatch and injected into AgentRequest.Metadata under
 	// "user.personality" so agents can adapt their tone without any per-agent code.
 	Personality sessions.PersonalityStore
-	log         *slog.Logger
+	// CompactionLLM and CompactionModel enable automatic history compaction.
+	// When CompactionThreshold > 0 and CompactionLLM is set, histories whose
+	// estimated token count exceeds the threshold are summarised before dispatch.
+	CompactionLLM       costguard.LLMClient
+	CompactionModel     string
+	CompactionThreshold int
+	log                 *slog.Logger
 }
 
 // New returns a Router with the given classifier, agents, session store, and
@@ -114,6 +121,7 @@ func (r *Router) Route(ctx context.Context, msg types.InboundMessage) (types.Out
 		Content: msg.Text,
 		Parts:   msg.Parts,
 	})
+	history = r.maybeCompact(ctx, msg.SessionID, history)
 
 	// 4. Classify — returns an ordered []Intent (one or more).
 	intents, classifyErr := r.Classifier.Classify(ctx, msg.SessionID, classifyInput(msg), history)
@@ -346,6 +354,7 @@ func (r *Router) RouteStream(ctx context.Context, msg types.InboundMessage) (<-c
 		Content: msg.Text,
 		Parts:   msg.Parts,
 	})
+	history = r.maybeCompact(ctx, msg.SessionID, history)
 
 	intents, classifyErr := r.Classifier.Classify(ctx, msg.SessionID, classifyInput(msg), history)
 	if classifyErr != nil {
@@ -571,4 +580,27 @@ func (r *Router) observePersonality(userID string, history []types.ConversationT
 			r.log.Warn("profile observe failed", "user_id", userID, "error", err)
 		}
 	}()
+}
+
+// maybeCompact runs context compaction on history when the router is configured
+// to do so. Falls back to the original history on error so the request always
+// proceeds — a compaction failure is logged as a warning, never fatal.
+func (r *Router) maybeCompact(ctx context.Context, sessionID string, history []types.ConversationTurn) []types.ConversationTurn {
+	if r.CompactionThreshold == 0 || r.CompactionLLM == nil {
+		return history
+	}
+	compacted, err := compact(ctx, r.CompactionLLM, r.CompactionModel, r.CompactionThreshold, history)
+	if err != nil {
+		r.log.WarnContext(ctx, "context compaction failed, using full history",
+			"session_id", sessionID, "error", err)
+		return history
+	}
+	if len(compacted) < len(history) {
+		r.log.InfoContext(ctx, "context compacted",
+			"session_id", sessionID,
+			"turns_before", len(history),
+			"turns_after", len(compacted),
+		)
+	}
+	return compacted
 }
