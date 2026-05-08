@@ -24,9 +24,11 @@ UserProfile  Project
 Reminders   Load/List
 ```
 
-**Request flow:** channel receives message → router classifies intent → one or more agents run their agentic loop (LLM ↔ tools) → response merged and returned → session history persisted.
+**Request flow:** channel receives message → router classifies intent → one or more agents run their agentic loop (LLM ↔ tools) → response merged and returned → session history persisted → history compacted if over token threshold.
 
-**Generic agent layer:** agents defined as folders under `agents/` (an `agent.yaml` + `SYSTEM.md`) are loaded at startup with no code changes. The Comms, Research, Doctor, Companion, and Notes agents all use this mechanism. See [docs/adding-agents.md](docs/adding-agents.md) for a step-by-step guide.
+**Generic agent layer:** agents defined as folders under `agents/` (an `agent.yaml` + `SYSTEM.md`, plus an optional `SOUL.md` for character/tone guidance) are loaded at startup with no code changes. The Comms, Research, Doctor, Companion, Notes, and Profile Query agents all use this mechanism. See [docs/adding-agents.md](docs/adding-agents.md) for a step-by-step guide.
+
+**Heartbeat worker:** a background goroutine that ticks on a configurable interval (`HEARTBEAT_INTERVAL`), reads a prompt from `HEARTBEAT.md` in the workspace (or falls back to an env var / built-in default), dispatches it through the router, and delivers the response to you via Discord, WhatsApp, or the web channel.
 
 ## What's built
 
@@ -75,10 +77,16 @@ Reminders   Load/List
 ```bash
 cp .env.example .env
 # fill in COSTGUARD_URL and any optional credentials
-docker compose up
+make run          # docker compose up --build (foreground, ctrl+c stops containers)
 ```
 
 `docker compose up` runs database migrations first, then starts the server on port `9091`. Data is persisted in named Docker volumes (`db_data`, `workspace`).
+
+To push a live `HEARTBEAT.md` into the running container without rebuilding:
+
+```bash
+make beat         # docker compose cp HEARTBEAT.md agentos:/app/workspace/HEARTBEAT.md
+```
 
 ### Locally
 
@@ -121,12 +129,13 @@ Copy `.env.example` to `.env` and fill in the values you need. Environment varia
 
 All model variables are optional. When unset, every agent defaults to `gemma4:26b`.
 
-| Variable | Agent | Description |
+| Variable | Agent | Notes |
 |---|---|---|
-| `COMMS_MODEL` | Comms | Model used for email, calendar, and reminder tasks |
-| `BUILDER_MODEL` | Builder | Model used for code generation and project tasks |
-| `RESEARCH_MODEL` | Research | Model used for web search and synthesis |
-| `CLASSIFIER_MODEL` | Router | Model used to classify incoming message intent |
+| `COMMS_MODEL` | Comms | Email, calendar, and reminder tasks |
+| `BUILDER_MODEL` | Builder | Code generation and project tasks |
+| `RESEARCH_MODEL` | Research | Web search and synthesis |
+| `CLASSIFIER_MODEL` | Router classifier | Outputs short structured JSON — a small fast model (e.g. `llama3.2:3b`) works well and reduces latency |
+| `PROFILE_MODEL` | Personality observer | Background signal recorder — same as above, short structured output, small model recommended |
 
 ### Discord channel
 
@@ -188,10 +197,40 @@ See [docs/whatsapp-setup.md](docs/whatsapp-setup.md) for full setup instructions
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `WHATSAPP_STORE_PATH` | For WhatsApp | `./data/whatsapp.db` | Path to the WhatsApp session database |
-| `WHATSAPP_ALLOWED_JID` | No | — | Comma-separated list of JIDs (phone numbers) allowed to send messages. Leave unset to allow all. |
+| `WHATSAPP_STORE_PATH` | For WhatsApp | — | Path to the WhatsApp session database (setting this enables the channel) |
+| `WHATSAPP_ALLOWED_JID` | When WhatsApp enabled | — | The only JID that Agent OS will respond to. Format: `<country-code><number>@s.whatsapp.net` (e.g. `96170123456@s.whatsapp.net`). Leave `WHATSAPP_ALLOWED_JID` unset on the first run — the server logs the JID of every incoming message so you can copy it. |
 
 If `WHATSAPP_STORE_PATH` is absent the WhatsApp channel is disabled and only web/Discord channels are active.
+
+### Heartbeat worker
+
+The heartbeat worker runs a prompt on a fixed interval and delivers the response to you via Discord or WhatsApp. It's disabled by default — set `HEARTBEAT_INTERVAL` to enable.
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `HEARTBEAT_INTERVAL` | To enable | — | How often to tick (e.g. `30m`, `1h`). Unset means disabled. |
+| `HEARTBEAT_USER_ID` | No | `u1` | The user ID the heartbeat runs as |
+| `HEARTBEAT_SESSION_ID` | No | `heartbeat` | Dedicated session ID — keeps heartbeat history separate from your normal chats |
+| `HEARTBEAT_CHANNEL` | No | `discord` | Delivery channel: `discord`, `whatsapp`, or `web` |
+| `HEARTBEAT_PROMPT` | No | see below | Fallback prompt when no `HEARTBEAT.md` file is present |
+
+**Prompt resolution order (highest priority first):**
+
+1. `{BUILDER_SANDBOX_DIR}/HEARTBEAT.md` — live-editable file in the workspace; re-read on every tick. Push it in without rebuilding: `make beat`
+2. `HEARTBEAT_PROMPT` env var — used when no `HEARTBEAT.md` exists
+3. Built-in default: _"Check my emails for anything urgent and summarize my calendar for today."_
+
+`HEARTBEAT.md` is the recommended way to customise the checklist because you can update it at any time without restarting.
+
+### Context compaction
+
+Long conversations accumulate history that eventually exceeds model context limits. When a session's estimated token count (characters ÷ 4) exceeds the threshold, the router automatically summarises older turns into a single system message before dispatching the next request. The 10 most recent turns are always kept verbatim.
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `COMPACTION_THRESHOLD` | No | `6000` | Estimated token count that triggers compaction. Set to `0` to disable. Lower this for models with small context windows. |
+
+Compaction errors are non-fatal: if the summarisation LLM call fails the full history is sent as-is and a warning is logged.
 
 ## API
 
@@ -249,7 +288,8 @@ internal/
   sessions/             — SessionStore, UserStore, ProjectStore, ReminderStore interfaces
   memory/               — in-memory and SQLite implementations of all stores
   approval/             — approval gate for sensitive tool actions
-  router/               — intent classifier, Router, compound dispatch
+  router/               — intent classifier, Router, compound dispatch, context compaction
+  heartbeat/            — background worker: ticks on interval, delivers prompt response to a channel
   channels/
     web/                — HTTP handler: /v1/chat, /v1/chat/stream, /healthz, /readyz
     discord/            — Discord gateway: DM + prefix routing, streaming edits
@@ -259,13 +299,7 @@ internal/
     builder/            — Builder Agent (requirements → spec → tasks → codegen → review)
     research/           — Research Agent (web search + synthesis)
     reviewer/           — Reviewer Agent (code review: reads workspace, emits structured feedback)
-    generic/            — loader: scans agents/ folders and registers them at startup
-agents/
-  comms/                — agent.yaml + SYSTEM.md (loaded by generic layer)
-  research/             — agent.yaml + SYSTEM.md
-  doctor/               — agent.yaml + SYSTEM.md (MedGemma medical assistant)
-  companion/            — agent.yaml + SYSTEM.md (personal conversational companion)
-  notes/                — agent.yaml + SYSTEM.md (markdown notes manager)
+    generic/            — loader: scans agents/ folders, reads agent.yaml + SYSTEM.md + optional SOUL.md
   tools/
     loop.go             — agentic loop (Complete for tool steps, Stream for final reply)
     email/              — email_list/read/search/draft/send + Gmail/Outlook providers
@@ -277,6 +311,13 @@ agents/
     code/               — file_read, file_write, file_list, shell_run (Builder sandbox)
   app/                  — config loading from .env + environment
   observability/        — structured logging setup
+agents/
+  comms/                — agent.yaml + SYSTEM.md (loaded by generic layer)
+  research/             — agent.yaml + SYSTEM.md
+  doctor/               — agent.yaml + SYSTEM.md (MedGemma medical assistant)
+  companion/            — agent.yaml + SYSTEM.md + SOUL.md (personal conversational companion)
+  notes/                — agent.yaml + SYSTEM.md (markdown notes manager)
+  profile_query/        — agent.yaml + SYSTEM.md (answers "what do you know about me?" queries)
 migrations/
   001_initial_schema.sql
   002_reminders_created_at.sql
