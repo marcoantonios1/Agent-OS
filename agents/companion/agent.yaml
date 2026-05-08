@@ -1,5 +1,5 @@
 id: companion
-model: llama3.2:3b
+model: gemma4:26b
 max_tokens: 4096
 intents:
   - companion
