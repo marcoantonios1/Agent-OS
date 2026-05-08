@@ -157,6 +157,13 @@ type Config struct {
 	// Overridden by HEARTBEAT.md in the workspace directory when present.
 	// Env: HEARTBEAT_PROMPT
 	HeartbeatPrompt string
+
+	// ── Context compaction ────────────────────────────────────────────────────
+
+	// CompactionThreshold is the estimated token count at which history is
+	// automatically summarised before dispatch. 0 disables compaction.
+	// Env: COMPACTION_THRESHOLD (default: 6000)
+	CompactionThreshold int
 }
 
 // Load reads configuration from the given .env file (if it exists) and then
@@ -207,6 +214,8 @@ func Load(envFile string) (*Config, error) {
 		HeartbeatSessionID: envOr("HEARTBEAT_SESSION_ID", "heartbeat"),
 		HeartbeatChannel:   envOr("HEARTBEAT_CHANNEL", "discord"),
 		HeartbeatPrompt:    os.Getenv("HEARTBEAT_PROMPT"),
+
+		CompactionThreshold: envInt("COMPACTION_THRESHOLD", 6000),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -287,6 +296,18 @@ func envDuration(key string, defaultVal time.Duration) time.Duration {
 		return defaultVal
 	}
 	return d
+}
+
+func envInt(key string, defaultVal int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultVal
+	}
+	var n int
+	if _, err := fmt.Sscanf(v, "%d", &n); err != nil {
+		return defaultVal
+	}
+	return n
 }
 
 // loadDotEnv reads KEY=VALUE pairs from the file at path and registers each as

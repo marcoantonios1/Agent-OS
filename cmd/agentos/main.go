@@ -134,6 +134,9 @@ func main() {
 	r.BuilderNotifier = web.ReminderNotifier{} // web: logs only; Discord overrides below
 	r.ProfileObserver = profile.New(llm, personalityStore, cfg.ProfileModel)
 	r.Personality = personalityStore
+	r.CompactionLLM = llm
+	r.CompactionModel = cfg.ClassifierModel
+	r.CompactionThreshold = cfg.CompactionThreshold
 	builderAgent.SetSubAgentCaller(r)
 	reminderWorker.SetDispatcher(r)
 	h := web.NewHandler(r, llm)
