@@ -18,6 +18,8 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/discord"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
+	"github.com/marcoantonios1/Agent-OS/internal/heartbeat"
+	"github.com/marcoantonios1/Agent-OS/internal/types"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/whatsApp"
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/memory"
@@ -187,6 +189,28 @@ func main() {
 		}()
 	} else {
 		slog.Warn("WHATSAPP_STORE_PATH not set — WhatsApp channel disabled")
+	}
+
+	// Start heartbeat worker if HEARTBEAT_INTERVAL is configured.
+	if cfg.HeartbeatConfigured() {
+		hbWorker := heartbeat.New(heartbeat.Config{
+			Interval:     cfg.HeartbeatInterval,
+			UserID:       cfg.HeartbeatUserID,
+			SessionID:    cfg.HeartbeatSessionID,
+			Channel:      types.ChannelID(cfg.HeartbeatChannel),
+			Prompt:       cfg.HeartbeatPrompt,
+			WorkspaceDir: cfg.BuilderSandboxDir,
+		}, r)
+		if discordHandler != nil {
+			hbWorker.AddNotifier(types.ChannelID("discord"), discordHandler)
+		}
+		if whatsAppHandler != nil {
+			hbWorker.AddNotifier(types.ChannelID("whatsapp"), whatsAppHandler)
+		}
+		hbWorker.AddNotifier(types.ChannelID("web"), web.ReminderNotifier{})
+		go hbWorker.Run(ctx)
+	} else {
+		slog.Info("HEARTBEAT_INTERVAL not set — heartbeat worker disabled")
 	}
 
 	// Block until SIGINT or SIGTERM.
