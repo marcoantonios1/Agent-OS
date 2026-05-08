@@ -61,6 +61,12 @@ Reminders   Load/List
 | 27 | Doctor Agent — MedGemma-powered medical information assistant | Done |
 | 28 | Companion Agent — personal conversational companion with user profile awareness | Done |
 | 29 | Notes Agent — capture, find, and update markdown notes via file tools | Done |
+| 30 | Personality store — observer agent records user personality signals; profile query agent surfaces them | Done |
+| 31 | Profile Query Agent — answers "what do you know about me?" from accumulated personality signals | Done |
+| 32 | SOUL.md support — optional `SOUL.md` alongside `SYSTEM.md` appends character/tone guidance to any generic agent | Done |
+| 33 | Heartbeat worker — ticks on a configurable interval, runs a prompt, delivers the response via Discord or WhatsApp | Done |
+| 34 | HEARTBEAT.md — live-editable checklist in the workspace; re-read on every tick without restarting | Done |
+| 35 | Context compaction — long sessions auto-summarised when estimated token count exceeds a threshold | Done |
 
 ## Quick start
 
