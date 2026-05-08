@@ -117,16 +117,34 @@ func (w *Worker) tick(ctx context.Context) {
 	}
 }
 
-// loadPrompt reads HEARTBEAT.md from WorkspaceDir when present. Falls back to
-// cfg.Prompt when the file is missing or empty.
+const defaultPrompt = "Check my emails for anything urgent and summarize my calendar for today."
+
+// loadPrompt resolves the prompt for this tick using the following priority:
+//  1. {WorkspaceDir}/HEARTBEAT.md — re-read on every tick, no restart needed.
+//  2. cfg.Prompt (HEARTBEAT_PROMPT env var) — if set and non-empty.
+//  3. defaultPrompt — hardcoded fallback so the heartbeat is always useful.
+//
+// File-not-found is silently ignored. Any other read error (e.g. permissions)
+// is logged as a warning before falling through to the next level.
 func (w *Worker) loadPrompt() string {
 	if w.cfg.WorkspaceDir != "" {
 		path := filepath.Join(w.cfg.WorkspaceDir, "HEARTBEAT.md")
-		if data, err := os.ReadFile(path); err == nil {
+		data, err := os.ReadFile(path)
+		switch {
+		case err == nil:
 			if s := strings.TrimSpace(string(data)); s != "" {
 				return s
 			}
+			// empty file — fall through
+		case os.IsNotExist(err):
+			// expected when the file hasn't been created yet — silent
+		default:
+			w.log.Warn("heartbeat: could not read HEARTBEAT.md, using fallback",
+				"path", path, "error", err)
 		}
 	}
-	return w.cfg.Prompt
+	if w.cfg.Prompt != "" {
+		return w.cfg.Prompt
+	}
+	return defaultPrompt
 }

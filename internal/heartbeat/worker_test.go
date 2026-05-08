@@ -229,6 +229,66 @@ func TestWorker_FallsBackToConfigPromptWhenNoFile(t *testing.T) {
 	}
 }
 
+func TestWorker_UsesHardcodedDefaultWhenNeitherFileNorEnvSet(t *testing.T) {
+	d := &mockDispatcher{response: "ok"}
+	n := &mockNotifier{}
+
+	cfg := heartbeat.Config{
+		Interval:     20 * time.Millisecond,
+		UserID:       "u1",
+		SessionID:    "heartbeat",
+		Channel:      "discord",
+		Prompt:       "", // no env var
+		WorkspaceDir: t.TempDir(), // no HEARTBEAT.md
+	}
+	w := heartbeat.New(cfg, d)
+	w.AddNotifier("discord", n)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	go w.Run(ctx)
+	<-ctx.Done()
+
+	if d.callCount() == 0 {
+		t.Fatal("expected at least one dispatch")
+	}
+	const want = "Check my emails for anything urgent and summarize my calendar for today."
+	if got := d.lastCall().Text; got != want {
+		t.Errorf("expected hardcoded default, got %q", got)
+	}
+}
+
+func TestWorker_EmptyHEARTBEATmd_FallsBackToEnvPrompt(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "HEARTBEAT.md"), []byte("   \n\t  "), 0o644) //nolint:errcheck
+
+	d := &mockDispatcher{response: "ok"}
+	n := &mockNotifier{}
+
+	cfg := heartbeat.Config{
+		Interval:     20 * time.Millisecond,
+		UserID:       "u1",
+		SessionID:    "heartbeat",
+		Channel:      "discord",
+		Prompt:       "env prompt",
+		WorkspaceDir: dir,
+	}
+	w := heartbeat.New(cfg, d)
+	w.AddNotifier("discord", n)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	go w.Run(ctx)
+	<-ctx.Done()
+
+	if d.callCount() == 0 {
+		t.Fatal("expected at least one dispatch")
+	}
+	if got := d.lastCall().Text; got != "env prompt" {
+		t.Errorf("empty HEARTBEAT.md should fall back to env prompt, got %q", got)
+	}
+}
+
 func TestWorker_NoNotifier_DoesNotPanic(t *testing.T) {
 	d := &mockDispatcher{response: "ok"}
 
