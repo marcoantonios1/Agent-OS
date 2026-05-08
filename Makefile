@@ -12,7 +12,10 @@ lint:
 	go vet ./...
 
 run:
-	docker compose up --build
+	docker compose up --build -d
+
+beat:
+	docker compose cp HEARTBEAT.md agentos:/app/workspace/HEARTBEAT.md; \
 
 migrate:
 	go run ./cmd/migrate/ -path $(DB)

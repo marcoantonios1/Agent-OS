@@ -10,24 +10,24 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/sessions"
 )
 
-// NotifyReminder implements reminder.Notifier. It delivers the reminder message
-// to the WhatsApp JID encoded in r.SessionID.
-//
-// Session ID format (set by sessionKey):
-//
-//	whatsapp:{jid}   e.g. whatsapp:96170855137@s.whatsapp.net
-//
-// Only sessions whose ID starts with "whatsapp:" are handled; all others are
-// silently ignored so the worker can broadcast to all registered notifiers.
+// NotifyReminder implements reminder.Notifier. It resolves the target JID from
+// r.UserID first, then falls back to parsing it from r.SessionID (legacy format
+// "whatsapp:{jid}"). Reminders with no resolvable WhatsApp JID are silently
+// ignored so the worker can broadcast to all registered notifiers.
 func (h *Handler) NotifyReminder(ctx context.Context, r *sessions.Reminder) error {
-	if !strings.HasPrefix(r.SessionID, "whatsapp:") {
-		return nil
+	// Prefer UserID — set directly by the heartbeat worker and reminder tools.
+	jidStr := r.UserID
+	if jidStr == "" {
+		// Legacy fallback: session ID encoded as "whatsapp:{jid}".
+		if !strings.HasPrefix(r.SessionID, "whatsapp:") {
+			return nil
+		}
+		jidStr = strings.TrimPrefix(r.SessionID, "whatsapp:")
 	}
 
-	jidStr := strings.TrimPrefix(r.SessionID, "whatsapp:")
 	jid, err := watypes.ParseJID(jidStr)
 	if err != nil {
-		return fmt.Errorf("whatsapp: parse JID from session %q: %w", r.SessionID, err)
+		return fmt.Errorf("whatsapp: parse JID %q: %w", jidStr, err)
 	}
 
 	if err := h.send(ctx, jid, r.Message); err != nil {
