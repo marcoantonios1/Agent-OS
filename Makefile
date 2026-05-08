@@ -13,9 +13,11 @@ lint:
 
 run:
 	docker compose up --build -d
-
-beat:
-	docker compose cp HEARTBEAT.md agentos:/app/workspace/HEARTBEAT.md; \
+	@if [ -f HEARTBEAT.md ]; then \
+		echo "Copying HEARTBEAT.md into workspace..."; \
+		docker compose cp HEARTBEAT.md agentos:/app/workspace/HEARTBEAT.md; \
+	fi
+	docker compose logs -f; docker compose stop
 
 migrate:
 	go run ./cmd/migrate/ -path $(DB)
