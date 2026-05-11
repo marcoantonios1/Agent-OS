@@ -29,6 +29,8 @@ Reminder
 
 **Adding a new agent:** create a folder under `agents/` with `agent.yaml` + `SYSTEM.md`. No Go code, no rebuild. The server picks it up on next start. See [docs/adding-agents.md](docs/adding-agents.md).
 
+**Learns about you:** after every conversation the router runs a background observer that extracts behavioural signals — how you like responses, your technical depth, communication style, interests. Once a signal has enough confidence it's automatically injected into every agent's system prompt so they all adapt without you having to repeat yourself.
+
 ---
 
 ## Run it in three steps
@@ -109,6 +111,15 @@ You are a culinary assistant. Suggest recipes, explain techniques,
 and find ingredient substitutions using web search when needed.
 ```
 
+**`agents/chef/SOUL.md`** _(optional)_
+```
+You speak like a passionate home cook, not a professional chef.
+Keep it conversational. Use ingredient quantities people can visualise
+("a small handful", "two glugs of olive oil"). Never sound like a recipe book.
+```
+
+`SOUL.md` is appended to the system prompt after `SYSTEM.md`. Use it to define tone, character, and style separately from capability — so you can tweak how an agent talks without touching its instructions. The companion agent's `SOUL.md` is a good reference.
+
 Restart and ask: _"Find me a recipe for sourdough bread"_ — the classifier routes to your new agent automatically.
 
 Full agent authoring reference: [docs/adding-agents.md](docs/adding-agents.md) · [docs/agent-config.md](docs/agent-config.md) · [docs/skills.md](docs/skills.md)
@@ -154,6 +165,37 @@ Edit what it checks without restarting:
 ```bash
 make beat   # copies HEARTBEAT.md into the running container's workspace
 ```
+
+---
+
+## Learns about you
+
+After every conversation (3+ turns) the router runs a background observer that reads the transcript and extracts behavioural signals without blocking your response. Signals are persisted in SQLite and accumulate confidence over time — the same signal needs to be observed roughly 6 times before it crosses the confidence threshold and starts being injected.
+
+Once a signal is confident enough it's automatically appended to the system prompt of **every** agent, so they all adapt without you repeating yourself:
+
+```
+## User personality (inferred — treat as guidance, not rules)
+- Communication style: direct (confidence: 0.8)
+- Response length preference: brief (confidence: 0.7)
+- Technical depth: high (confidence: 0.9)
+- Topic interests: golang, systems-design, startups (confidence: 0.7)
+```
+
+Signals observed:
+
+| Signal | What it captures | Example values |
+|---|---|---|
+| `response_length` | How long you like replies | `brief` · `detailed` · `verbose` |
+| `technical_depth` | How deep to go technically | `low` · `medium` · `high` |
+| `communication_style` | Formality you prefer | `formal` · `casual` · `direct` |
+| `humor_tolerance` | Whether you appreciate jokes | `none` · `light` · `high` |
+| `question_style` | How you ask questions | `asks_followup` · `assumes` · `guesses` |
+| `working_hours` | When you tend to work | `morning` · `evening` · `night` · `mixed` |
+| `urgency_pattern` | How time-sensitive your requests feel | `high` · `medium` · `low` |
+| `topic_interests` | Recurring subjects | comma-separated topics |
+
+To ask what it knows about you: _"What do you know about me?"_ — the Profile Query agent answers from the accumulated signals.
 
 ---
 

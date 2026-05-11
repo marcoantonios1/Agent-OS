@@ -108,6 +108,57 @@ Tips:
 
 ---
 
+## Step 3b — Write `SOUL.md` (optional)
+
+`SOUL.md` sits alongside `SYSTEM.md` and is appended to the system prompt after it. It is purely optional — omit it and the agent behaves exactly as the `SYSTEM.md` dictates.
+
+**Use it to define character and tone separately from capability.** The idea is that `SYSTEM.md` answers _what the agent does and how_, while `SOUL.md` answers _who the agent is_ — its voice, rhythm, personality, and the things it avoids. Separating the two makes both easier to edit and reason about.
+
+```
+agents/my-agent/
+  agent.yaml
+  SYSTEM.md    ← what the agent does, which tools it calls, workflow rules
+  SOUL.md      ← tone, character, how it sounds — optional
+```
+
+A minimal example:
+
+```markdown
+You speak directly and avoid corporate phrasing.
+Keep responses short unless depth is asked for.
+Never use phrases like "Certainly!" or "Of course!".
+```
+
+A more detailed example (see `agents/companion/SOUL.md` for the full version):
+
+```markdown
+intelligence:
+  - sharp but never performative
+  - thinks in consequences and tradeoffs
+
+tone:
+  - grounded, subtly philosophical
+  - dry humour, low frequency, high accuracy
+  - never becomes a motivational speaker
+
+communication_rules:
+  - avoid fake positivity
+  - avoid therapy language unless necessary
+  - brevity is acceptable — not every response needs to be long
+```
+
+`SOUL.md` content is not validated — write it however reads naturally to the model you are using. Plain instructions, YAML, bullet lists, or prose all work. The file is simply appended as text.
+
+**When to add one:**
+- Your agent needs a distinctive voice that is consistent across many different topics
+- You want to tune tone (e.g. dry vs warm) without touching the capability instructions
+- You are building a companion or persona-style agent where character matters
+
+**When to skip it:**
+- Task-only agents (finance, research, notes) rarely need one — a neutral professional tone from `SYSTEM.md` is fine
+
+---
+
 ## Step 4 — Update the classifier
 
 The classifier LLM only routes to intents it knows about. Open `internal/router/classifier.go` and add an entry for your new intent in the `systemPrompt` constant:
@@ -149,7 +200,7 @@ If the folder is skipped, a `WARN generic.LoadAll: skipping agent` line will sho
 
 ## Dynamic context (automatic)
 
-Every agent loaded via `agent.yaml` automatically receives two context blocks appended to its system prompt at call time:
+Every agent loaded via `agent.yaml` automatically receives three context blocks appended to its system prompt at call time — you do not need to add anything to your files:
 
 ```
 ## User context
@@ -158,12 +209,21 @@ Communication style: direct
 Preferences:
   - sign_off: Marco
 
+## User personality (inferred — treat as guidance, not rules)
+- Communication style: direct (confidence: 0.8)
+- Response length preference: brief (confidence: 0.7)
+- Technical depth: high (confidence: 0.9)
+
 ## Current time
 Local date/time (use this UTC offset for ALL calendar timestamps): 2026-05-06T16:00:00+03:00
 Day of week: Wednesday
 ```
 
-You can reference both sections in your `SYSTEM.md` rules — for example, "use the UTC offset from ## Current time for all calendar timestamps."
+**User context** — the user's name, communication style, preferences, and recurring contacts from their profile (set via `user_profile_update` or learned over time).
+
+**User personality** — behavioural signals observed by the background personality observer. After each conversation the observer extracts signals (response length preference, technical depth, communication style, topic interests, and more) and persists them in SQLite. A signal only appears here once its confidence reaches 0.6 — meaning it has been consistently observed across multiple separate conversations. All your agents share these signals automatically, so they all adapt to the user's style without any per-agent code.
+
+**Current time** — the local date, time, and UTC offset. Always present. Reference it in calendar-related rules: "use the UTC offset from ## Current time for all calendar timestamps."
 
 ---
 
