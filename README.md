@@ -120,7 +120,18 @@ Keep it conversational. Use ingredient quantities people can visualise
 
 `SOUL.md` is appended to the system prompt after `SYSTEM.md`. Use it to define tone, character, and style separately from capability — so you can tweak how an agent talks without touching its instructions. The companion agent's `SOUL.md` is a good reference.
 
-Restart and ask: _"Find me a recipe for sourdough bread"_ — the classifier routes to your new agent automatically.
+**Then register your intents with the classifier** — open `internal/router/classifier.go` and add an entry to the `systemPrompt` constant so the router knows when to route to your agent:
+
+```go
+- "chef"    – Questions about cooking, recipes, ingredients, or food preparation.
+              Also use for "recipe" and "cooking" intents.
+              Examples: "Find me a pasta recipe", "What can I make with chickpeas?",
+                        "How do I caramelise onions?"
+```
+
+Without this step the router never picks your agent — it only knows about intents listed in the classifier prompt.
+
+Restart and ask: _"Find me a recipe for sourdough bread"_ — the classifier routes to your new agent.
 
 Full agent authoring reference: [docs/adding-agents.md](docs/adding-agents.md) · [docs/agent-config.md](docs/agent-config.md) · [docs/skills.md](docs/skills.md)
 
