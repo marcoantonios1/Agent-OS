@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -21,14 +22,13 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/memory"
 	"github.com/marcoantonios1/Agent-OS/internal/router"
-	"github.com/marcoantonios1/Agent-OS/internal/tools"
 	"github.com/marcoantonios1/Agent-OS/internal/sessions"
+	"github.com/marcoantonios1/Agent-OS/internal/skills"
+	"github.com/marcoantonios1/Agent-OS/internal/tools"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/calendar"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/code"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/email"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/project"
-	"github.com/marcoantonios1/Agent-OS/internal/tools/reminder"
-	"github.com/marcoantonios1/Agent-OS/internal/tools/userprofile"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/websearch"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
@@ -200,12 +200,6 @@ func (m *mockSearchProvider) Search(_ context.Context, _ string, _ int) ([]webse
 	return m.results, nil
 }
 
-// newWebSearchRegistry builds a ToolRegistry backed by the given provider.
-// Mirrors the helper in main.go so tests exercise the same wiring.
-func newWebSearchRegistry(prov websearch.SearchProvider) *tools.ToolRegistry {
-	return websearch.NewWebSearchRegistry(prov)
-}
-
 // ── testStack ─────────────────────────────────────────────────────────────────
 
 // testStack holds the full HTTP test stack for one scenario.
@@ -268,26 +262,25 @@ func newStack(cfg stackConfig) *testStack {
 	builderCfg := code.Config{SandboxDir: sandboxDir}
 	reminderStore := memory.NewReminderStore()
 
-	commsReg := buildCommsRegistry(cfg.emailProv, cfg.calProv, approvals, userStore, reminderStore)
+	globalReg := skills.NewGlobalRegistry(
+		cfg.emailProv, cfg.calProv, searchProv,
+		approvals, userStore, reminderStore, projectStore, store,
+		builderCfg,
+	)
 	builderReg := buildBuilderRegistry(builderCfg, projectStore, store)
 	reviewerReg := buildReviewerRegistry(builderCfg)
 
 	builderAgent := builder.New(agentLLM, builderReg, store, projectStore, "gemma4:26b")
 
-	commsAgent, err := generic.Load("../../agents/comms", agentLLM, commsReg)
-	if err != nil {
-		panic("newStack: failed to load comms agent: " + err.Error())
-	}
-	researchAgent, err := generic.Load("../../agents/research", agentLLM, newWebSearchRegistry(searchProv))
-	if err != nil {
-		panic("newStack: failed to load research agent: " + err.Error())
-	}
-
 	agents := map[router.Intent]router.Agent{
-		router.IntentComms:    commsAgent,
 		router.IntentBuilder:  builderAgent,
-		router.IntentResearch: researchAgent,
 		router.IntentReviewer: reviewer.New(agentLLM, reviewerReg, "gemma4:26b"),
+	}
+	genericAgents, _ := generic.LoadAll(filepath.Join("..", "..", "agents"), agentLLM, globalReg)
+	for intent, agent := range genericAgents {
+		if _, exists := agents[intent]; !exists {
+			agents[intent] = agent
+		}
 	}
 
 	r := router.New(classifier, agents, store, approvals)
@@ -315,29 +308,6 @@ func (ts *testStack) Close() {
 }
 
 // ── registry builders for tests ───────────────────────────────────────────────
-
-func buildCommsRegistry(ep email.EmailProvider, cp calendar.CalendarProvider, approvals approval.Store, users sessions.UserStore, reminders sessions.ReminderStore) *tools.ToolRegistry {
-	reg := tools.NewRegistry()
-	reg.Register(userprofile.NewReadTool(users))
-	reg.Register(userprofile.NewUpdateTool(users))
-	reg.Register(reminder.NewSetTool(reminders))
-	reg.Register(reminder.NewCancelTool(reminders))
-	reg.Register(reminder.NewListTool(reminders))
-	if ep != nil {
-		reg.Register(email.NewListTool(ep))
-		reg.Register(email.NewReadTool(ep))
-		reg.Register(email.NewSearchTool(ep))
-		reg.Register(email.NewDraftTool(ep))
-		reg.Register(email.NewSendTool(ep, approvals))
-	}
-	if cp != nil {
-		reg.Register(calendar.NewListTool(cp))
-		reg.Register(calendar.NewReadTool(cp))
-		reg.Register(calendar.NewCreateTool(cp, approvals))
-		reg.Register(calendar.NewUpdateTool(cp, approvals))
-	}
-	return reg
-}
 
 func buildBuilderRegistry(cfg code.Config, projects sessions.ProjectStore, store sessions.SessionStore) *tools.ToolRegistry {
 	reg := tools.NewRegistry()

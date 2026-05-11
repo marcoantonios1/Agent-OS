@@ -25,6 +25,7 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/memory"
 	"github.com/marcoantonios1/Agent-OS/internal/router"
 	"github.com/marcoantonios1/Agent-OS/internal/tools"
+	"github.com/marcoantonios1/Agent-OS/internal/tools/websearch"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
 
@@ -211,7 +212,7 @@ func TestPhase4b_DoctorAgent_RoutesCorrectly(t *testing.T) {
 	)
 
 	// Global registry with web search tools (doctor agent declares web_search, web_fetch).
-	globalReg := newWebSearchRegistry(&mockSearchProvider{})
+	globalReg := websearch.NewWebSearchRegistry(&mockSearchProvider{})
 
 	// Load the doctor agent.
 	genericAgents, err := generic.LoadAll(dir, llm, globalReg)
