@@ -14,8 +14,7 @@ import (
 	"time"
 
 	"github.com/marcoantonios1/Agent-OS/internal/agents/builder"
-	"github.com/marcoantonios1/Agent-OS/internal/agents/comms"
-	"github.com/marcoantonios1/Agent-OS/internal/agents/research"
+	"github.com/marcoantonios1/Agent-OS/internal/agents/generic"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/reviewer"
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
@@ -275,10 +274,19 @@ func newStack(cfg stackConfig) *testStack {
 
 	builderAgent := builder.New(agentLLM, builderReg, store, projectStore, "gemma4:26b")
 
+	commsAgent, err := generic.Load("../../agents/comms", agentLLM, commsReg)
+	if err != nil {
+		panic("newStack: failed to load comms agent: " + err.Error())
+	}
+	researchAgent, err := generic.Load("../../agents/research", agentLLM, newWebSearchRegistry(searchProv))
+	if err != nil {
+		panic("newStack: failed to load research agent: " + err.Error())
+	}
+
 	agents := map[router.Intent]router.Agent{
-		router.IntentComms:    comms.New(agentLLM, commsReg, "gemma4:26b"),
+		router.IntentComms:    commsAgent,
 		router.IntentBuilder:  builderAgent,
-		router.IntentResearch: research.New(agentLLM, newWebSearchRegistry(searchProv), "gemma4:26b"),
+		router.IntentResearch: researchAgent,
 		router.IntentReviewer: reviewer.New(agentLLM, reviewerReg, "gemma4:26b"),
 	}
 
