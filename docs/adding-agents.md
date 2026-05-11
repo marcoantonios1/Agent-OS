@@ -161,16 +161,30 @@ communication_rules:
 
 ## Step 4 — Update the classifier
 
-The classifier LLM only routes to intents it knows about. Open `internal/router/classifier.go` and add an entry for your new intent in the `systemPrompt` constant:
+**This step is required.** The router only routes to intents the classifier knows about. An agent whose intents aren't listed here will never be called, even if the folder loads correctly.
 
-```go
+Open `internal/router/classifier.go`. Find the `systemPrompt` constant — it contains the list of valid intents. Add an entry in the same format as the existing ones:
+
+```
 - "my-agent" – One-sentence description of when to route here.
-               Examples: "User asks about X", "User wants to do Y"
+               Use this for: X, Y, Z.
+               Examples: "User asks about X", "User wants to do Y",
+                         "User mentions Z"
 ```
 
-Also add a few-shot example at the bottom of the prompt:
+Match the real format exactly — the dash, the quoted intent name, the em-dash, the description, and indented examples. The LLM reads this verbatim and uses it to decide routing.
 
-```go
+For the finance example:
+
+```
+- "finance"  – Questions about budgets, expenses, invoices, payments, or financial research.
+               Examples: "How much did I spend last month?", "Find the invoice from Acme",
+                         "What's the EUR/USD rate?", "Track this expense"
+```
+
+Then scroll to the few-shot examples block at the bottom of `systemPrompt` and add one:
+
+```
 {"intents": ["my-agent"]}
 ```
 
