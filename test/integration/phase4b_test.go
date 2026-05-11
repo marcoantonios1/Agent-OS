@@ -24,8 +24,9 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/memory"
 	"github.com/marcoantonios1/Agent-OS/internal/router"
+	"github.com/marcoantonios1/Agent-OS/internal/skills"
 	"github.com/marcoantonios1/Agent-OS/internal/tools"
-	"github.com/marcoantonios1/Agent-OS/internal/tools/websearch"
+	"github.com/marcoantonios1/Agent-OS/internal/tools/code"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
 
@@ -211,8 +212,16 @@ func TestPhase4b_DoctorAgent_RoutesCorrectly(t *testing.T) {
 		textResp("Headaches and fever together may indicate an infection. Please consult a doctor."),
 	)
 
-	// Global registry with web search tools (doctor agent declares web_search, web_fetch).
-	globalReg := websearch.NewWebSearchRegistry(&mockSearchProvider{})
+	// Build the global registry via skills.NewGlobalRegistry so web_search and
+	// web_fetch are registered through the canonical single code path.
+	store := memory.NewStore()
+	defer store.Close()
+	approvals := approval.NewMemoryStore()
+	globalReg := skills.NewGlobalRegistry(
+		nil, nil, &mockSearchProvider{},
+		approvals, memory.NewUserStore(), memory.NewReminderStore(),
+		memory.NewProjectStore(), store, code.Config{},
+	)
 
 	// Load the doctor agent.
 	genericAgents, err := generic.LoadAll(dir, llm, globalReg)
@@ -222,11 +231,6 @@ func TestPhase4b_DoctorAgent_RoutesCorrectly(t *testing.T) {
 	if len(genericAgents) == 0 {
 		t.Fatal("LoadAll: no agents loaded from temp dir")
 	}
-
-	// Wire router + HTTP server with only the doctor agent registered.
-	store := memory.NewStore()
-	defer store.Close()
-	approvals := approval.NewMemoryStore()
 	classifier := router.NewLLMClassifier(llm, "gemma4:26b")
 
 	agentsMap := make(map[router.Intent]router.Agent, len(genericAgents))
