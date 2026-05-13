@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -113,6 +114,18 @@ type Config struct {
 	// Env: SESSION_TTL (default: 24h). Accepts any value parseable by time.ParseDuration.
 	SessionTTL time.Duration
 
+	// ── Telegram channel ─────────────────────────────────────────────────────
+
+	// TelegramBotToken is the bot token obtained from @BotFather.
+	// Setting this enables the Telegram channel.
+	// Env: TELEGRAM_BOT_TOKEN (required to enable Telegram)
+	TelegramBotToken string
+
+	// TelegramAllowedUserID is the numeric Telegram user ID that Agent OS will
+	// respond to. Required when TELEGRAM_BOT_TOKEN is set.
+	// Env: TELEGRAM_ALLOWED_USER_ID
+	TelegramAllowedUserID int64
+
 	// ── WhatsApp channel ─────────────────────────────────────────────────────
 
 	// WhatsAppStorePath is the path to the SQLite DB that stores the WhatsApp
@@ -204,6 +217,9 @@ func Load(envFile string) (*Config, error) {
 		BuilderSandboxDir: envOr("BUILDER_SANDBOX_DIR", "workspace"),
 		SessionTTL:        envDuration("SESSION_TTL", 24*time.Hour),
 
+		TelegramBotToken:      os.Getenv("TELEGRAM_BOT_TOKEN"),
+		TelegramAllowedUserID: envInt64("TELEGRAM_ALLOWED_USER_ID", 0),
+
 		WhatsAppStorePath:  os.Getenv("WHATSAPP_STORE_PATH"),
 		WhatsAppAllowedJID: os.Getenv("WHATSAPP_ALLOWED_JID"),
 
@@ -230,6 +246,9 @@ func (c *Config) validate() error {
 	if c.CostguardURL == "" {
 		missing = append(missing, "COSTGUARD_URL is required — set it to your Costguard gateway base URL (e.g. http://localhost:8080)")
 	}
+	if c.TelegramBotToken != "" && c.TelegramAllowedUserID == 0 {
+		missing = append(missing, "TELEGRAM_ALLOWED_USER_ID is required when Telegram is enabled — set it to your numeric Telegram user ID (find it via @userinfobot)")
+	}
 	if c.WhatsAppStorePath != "" && c.WhatsAppAllowedJID == "" {
 		missing = append(missing, "WHATSAPP_ALLOWED_JID is required when WhatsApp is enabled — set it to your personal number's JID (e.g. 96170123456@s.whatsapp.net)")
 	}
@@ -248,6 +267,11 @@ func (c *Config) SQLiteConfigured() bool {
 // DiscordConfigured reports whether a Discord bot token is present.
 func (c *Config) DiscordConfigured() bool {
 	return c.DiscordBotToken != ""
+}
+
+// TelegramConfigured reports whether a Telegram bot token is present.
+func (c *Config) TelegramConfigured() bool {
+	return c.TelegramBotToken != ""
 }
 
 // WhatsAppConfigured reports whether a WhatsApp store path is set.
@@ -305,6 +329,18 @@ func envInt(key string, defaultVal int) int {
 	}
 	var n int
 	if _, err := fmt.Sscanf(v, "%d", &n); err != nil {
+		return defaultVal
+	}
+	return n
+}
+
+func envInt64(key string, defaultVal int64) int64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultVal
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
 		return defaultVal
 	}
 	return n
