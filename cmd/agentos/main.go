@@ -17,6 +17,7 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/app"
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/discord"
+	"github.com/marcoantonios1/Agent-OS/internal/channels/telegram"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
 	"github.com/marcoantonios1/Agent-OS/internal/heartbeat"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
@@ -194,6 +195,24 @@ func main() {
 		slog.Warn("WHATSAPP_STORE_PATH not set — WhatsApp channel disabled")
 	}
 
+	// Start Telegram channel if configured.
+	var telegramHandler *telegram.Handler
+	if cfg.TelegramConfigured() {
+		telegramHandler, err = telegram.New(r, cfg.TelegramBotToken, cfg.TelegramAllowedUserID)
+		if err != nil {
+			slog.Error("telegram: setup failed", "error", err)
+			os.Exit(1)
+		}
+		reminderWorker.AddNotifier(telegramHandler)
+		go func() {
+			if err := telegramHandler.Start(ctx); err != nil {
+				slog.Error("telegram channel error", "error", err)
+			}
+		}()
+	} else {
+		slog.Warn("TELEGRAM_BOT_TOKEN not set — Telegram channel disabled")
+	}
+
 	// Start heartbeat worker if HEARTBEAT_INTERVAL is configured.
 	if cfg.HeartbeatConfigured() {
 		hbWorker := heartbeat.New(heartbeat.Config{
@@ -210,6 +229,9 @@ func main() {
 		if whatsAppHandler != nil {
 			hbWorker.AddNotifier(types.ChannelID("whatsapp"), whatsAppHandler)
 		}
+		if telegramHandler != nil {
+			hbWorker.AddNotifier(types.ChannelID("telegram"), telegramHandler)
+		}
 		hbWorker.AddNotifier(types.ChannelID("web"), web.ReminderNotifier{})
 		go hbWorker.Run(ctx)
 	} else {
@@ -225,6 +247,9 @@ func main() {
 	}
 	if whatsAppHandler != nil {
 		whatsAppHandler.Stop()
+	}
+	if telegramHandler != nil {
+		telegramHandler.Stop()
 	}
 
 	slog.Info("shutting down — draining in-flight requests")
