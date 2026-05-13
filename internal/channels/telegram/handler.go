@@ -6,6 +6,7 @@ package telegram
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -20,6 +21,7 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
 	"github.com/marcoantonios1/Agent-OS/internal/sessions"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
+	"github.com/marcoantonios1/Agent-OS/internal/voice"
 )
 
 // maxMessageLen is Telegram's per-message character limit.
@@ -46,9 +48,14 @@ type Handler struct {
 	username   string // bot's own username, set by New() from Self.UserName
 	dispatcher web.Dispatcher
 	allowedUID int64  // silently drop messages from any other user ID
+	transcriber voice.Transcriber
 	log        *slog.Logger
 	httpClient *http.Client
 }
+
+// SetTranscriber replaces the handler's transcriber. Call after New() to enable
+// voice-to-text; omitting it leaves the NoopTranscriber default in place.
+func (h *Handler) SetTranscriber(t voice.Transcriber) { h.transcriber = t }
 
 // New creates a Handler and validates the bot token by calling GetMe.
 // Returns an error if the token is invalid or the Telegram API is unreachable.
@@ -58,12 +65,13 @@ func New(dispatcher web.Dispatcher, token string, allowedUID int64) (*Handler, e
 		return nil, fmt.Errorf("telegram: create bot: %w", err)
 	}
 	return &Handler{
-		bot:        bot,
-		username:   bot.Self.UserName,
-		dispatcher: dispatcher,
-		allowedUID: allowedUID,
-		log:        slog.Default(),
-		httpClient: http.DefaultClient,
+		bot:         bot,
+		username:    bot.Self.UserName,
+		dispatcher:  dispatcher,
+		allowedUID:  allowedUID,
+		transcriber: &voice.NoopTranscriber{},
+		log:         slog.Default(),
+		httpClient:  http.DefaultClient,
 	}, nil
 }
 
@@ -71,12 +79,13 @@ func New(dispatcher web.Dispatcher, token string, allowedUID int64) (*Handler, e
 // validation. bot is a mock implementation of BotAPI.
 func NewForTest(dispatcher web.Dispatcher, bot BotAPI, allowedUID int64) *Handler {
 	return &Handler{
-		bot:        bot,
-		username:   "testbot",
-		dispatcher: dispatcher,
-		allowedUID: allowedUID,
-		log:        slog.Default(),
-		httpClient: http.DefaultClient,
+		bot:         bot,
+		username:    "testbot",
+		dispatcher:  dispatcher,
+		allowedUID:  allowedUID,
+		transcriber: &voice.NoopTranscriber{},
+		log:         slog.Default(),
+		httpClient:  http.DefaultClient,
 	}
 }
 
@@ -138,8 +147,46 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 
 	switch {
 	case msg.Voice != nil:
-		h.sendText(msg.Chat.ID, "Voice messages aren't supported yet.")
-		return
+		mimeType := "audio/ogg"
+		if msg.Voice.MimeType != "" {
+			mimeType = msg.Voice.MimeType
+		}
+		url, err := h.bot.GetFileDirectURL(msg.Voice.FileID)
+		if err != nil {
+			h.log.WarnContext(ctx, "telegram: failed to get voice URL",
+				"session_id", sid, "error", err)
+			h.sendText(msg.Chat.ID, "Sorry, I couldn't access that voice message.")
+			return
+		}
+		audioBytes, err := h.fetchRaw(ctx, url)
+		if err != nil {
+			h.log.WarnContext(ctx, "telegram: failed to download voice",
+				"session_id", sid, "error", err)
+			h.sendText(msg.Chat.ID, "Sorry, I couldn't download that voice message.")
+			return
+		}
+		text, transcribeErr := h.transcriber.Transcribe(ctx, audioBytes, mimeType)
+		if errors.Is(transcribeErr, voice.ErrNotSupported) {
+			h.sendText(msg.Chat.ID,
+				"Voice messages aren't supported yet — please type your message.")
+			return
+		}
+		if transcribeErr != nil {
+			h.log.WarnContext(ctx, "telegram: transcription failed",
+				"session_id", sid, "error", transcribeErr)
+			h.sendText(msg.Chat.ID,
+				"Sorry, I couldn't transcribe that voice message — please type your message.")
+			return
+		}
+		inbound := types.InboundMessage{
+			ID:        strconv.Itoa(msg.MessageID),
+			ChannelID: types.ChannelID("telegram"),
+			UserID:    strconv.FormatInt(msg.From.ID, 10),
+			SessionID: sid,
+			Text:      text,
+			Timestamp: time.Now(),
+		}
+		h.routeAndRespond(ctx, msg.Chat.ID, sid, inbound)
 
 	case msg.Photo != nil:
 		// Telegram provides multiple photo sizes; the last one is the largest.
@@ -299,14 +346,8 @@ func (h *Handler) sendText(chatID int64, text string) {
 	}
 }
 
-// downloadFile retrieves a Telegram file by ID and returns it as a ContentPart.
-// For images it base64-encodes the raw bytes; for PDFs it extracts the text.
-func (h *Handler) downloadFile(ctx context.Context, fileID, mimeType, filename string) ([]types.ContentPart, error) {
-	url, err := h.bot.GetFileDirectURL(fileID)
-	if err != nil {
-		return nil, fmt.Errorf("get file URL: %w", err)
-	}
-
+// fetchRaw downloads raw bytes from url using the handler's HTTP client.
+func (h *Handler) fetchRaw(ctx context.Context, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
@@ -319,6 +360,20 @@ func (h *Handler) downloadFile(ctx context.Context, fileID, mimeType, filename s
 	resp.Body.Close()
 	if readErr != nil {
 		return nil, fmt.Errorf("read body: %w", readErr)
+	}
+	return data, nil
+}
+
+// downloadFile retrieves a Telegram file by ID and returns it as a ContentPart.
+// For images it base64-encodes the raw bytes; for PDFs it extracts the text.
+func (h *Handler) downloadFile(ctx context.Context, fileID, mimeType, filename string) ([]types.ContentPart, error) {
+	url, err := h.bot.GetFileDirectURL(fileID)
+	if err != nil {
+		return nil, fmt.Errorf("get file URL: %w", err)
+	}
+	data, err := h.fetchRaw(ctx, url)
+	if err != nil {
+		return nil, err
 	}
 
 	switch {

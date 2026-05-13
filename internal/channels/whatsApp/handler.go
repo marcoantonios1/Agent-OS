@@ -29,6 +29,7 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/attachments"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
 	agenttypes "github.com/marcoantonios1/Agent-OS/internal/types"
+	"github.com/marcoantonios1/Agent-OS/internal/voice"
 )
 
 var errUnsupportedMediaType = errors.New("unsupported media type")
@@ -42,12 +43,17 @@ type mediaDownloader interface {
 // Dispatcher. Only messages from allowedJID are processed; all others are
 // silently dropped.
 type Handler struct {
-	client     *whatsmeow.Client
-	downloader mediaDownloader // defaults to client; overridden in tests
-	dispatcher web.Dispatcher
-	allowedJID string // only respond to this JID; validated non-empty by New
-	log        *slog.Logger
+	client      *whatsmeow.Client
+	downloader  mediaDownloader   // defaults to client; overridden in tests
+	dispatcher  web.Dispatcher
+	allowedJID  string            // only respond to this JID; validated non-empty by New
+	transcriber voice.Transcriber // nil → voice messages silently rejected
+	log         *slog.Logger
 }
+
+// SetTranscriber replaces the handler's transcriber. Call after New() to enable
+// voice-to-text; omitting it leaves voice messages unsupported.
+func (h *Handler) SetTranscriber(t voice.Transcriber) { h.transcriber = t }
 
 // New creates a Handler.
 //   - dispatcher is the router (satisfies web.Dispatcher and optionally web.StreamDispatcher).
@@ -167,6 +173,35 @@ func (h *Handler) onMessage(evt *events.Message) {
 	}
 
 	text := extractText(evt.Message)
+
+	// Handle voice/audio messages via transcription.
+	if audio := evt.Message.GetAudioMessage(); audio != nil {
+		if h.transcriber == nil {
+			h.send(ctx, chat, "Voice messages aren't supported yet — please type your message.") //nolint:errcheck
+			return
+		}
+		data, err := h.downloader.DownloadAny(ctx, evt.Message)
+		if err != nil {
+			h.logger().WarnContext(ctx, "whatsapp: audio download failed", "error", err)
+			h.send(ctx, chat, "Sorry, I couldn't download that voice message.") //nolint:errcheck
+			return
+		}
+		mime := audio.GetMimetype()
+		if mime == "" {
+			mime = "audio/ogg"
+		}
+		transcribed, err := h.transcriber.Transcribe(ctx, data, mime)
+		if errors.Is(err, voice.ErrNotSupported) {
+			h.send(ctx, chat, "Voice messages aren't supported yet — please type your message.") //nolint:errcheck
+			return
+		}
+		if err != nil {
+			h.logger().WarnContext(ctx, "whatsapp: transcription failed", "error", err)
+			h.send(ctx, chat, "Sorry, I couldn't transcribe that voice message — please type your message.") //nolint:errcheck
+			return
+		}
+		text = transcribed
+	}
 
 	attParts, err := h.processMedia(ctx, evt.Message)
 	if errors.Is(err, errUnsupportedMediaType) {

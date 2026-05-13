@@ -279,6 +279,11 @@ func (c *Config) DiscordConfigured() bool {
 	return c.DiscordBotToken != ""
 }
 
+// VoiceTranscriptionEnabled reports whether VOICE_TRANSCRIPTION=enabled.
+func (c *Config) VoiceTranscriptionEnabled() bool {
+	return c.VoiceTranscription == "enabled"
+}
+
 // TelegramConfigured reports whether a Telegram bot token is present.
 func (c *Config) TelegramConfigured() bool {
 	return c.TelegramBotToken != ""

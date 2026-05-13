@@ -19,6 +19,7 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/channels/discord"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/telegram"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
+	"github.com/marcoantonios1/Agent-OS/internal/voice"
 	"github.com/marcoantonios1/Agent-OS/internal/heartbeat"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/whatsApp"
@@ -162,6 +163,16 @@ func main() {
 
 	go reminderWorker.Run(ctx)
 
+	// Build transcriber — enabled only when VOICE_TRANSCRIPTION=enabled.
+	var transcriber voice.Transcriber
+	if cfg.VoiceTranscriptionEnabled() {
+		transcriber = voice.NewCostguardTranscriber(cfg.CostguardURL, cfg.CostguardAPIKey)
+		slog.Info("voice transcription enabled")
+	} else {
+		transcriber = &voice.NoopTranscriber{}
+		slog.Info("VOICE_TRANSCRIPTION not set — voice messages will prompt users to type instead")
+	}
+
 	// Start Discord channel if configured.
 	var discordHandler *discord.Handler
 	if cfg.DiscordConfigured() {
@@ -185,6 +196,7 @@ func main() {
 			slog.Error("whatsapp: setup failed", "error", err)
 			os.Exit(1)
 		}
+		whatsAppHandler.SetTranscriber(transcriber)
 		reminderWorker.AddNotifier(whatsAppHandler)
 		go func() {
 			if err := whatsAppHandler.Start(ctx); err != nil {
@@ -203,6 +215,7 @@ func main() {
 			slog.Error("telegram: setup failed", "error", err)
 			os.Exit(1)
 		}
+		telegramHandler.SetTranscriber(transcriber)
 		reminderWorker.AddNotifier(telegramHandler)
 		go func() {
 			if err := telegramHandler.Start(ctx); err != nil {
