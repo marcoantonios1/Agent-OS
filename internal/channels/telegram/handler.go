@@ -29,10 +29,21 @@ const maxMessageLen = 4096
 // 500 ms gives ~2 edits/sec — well within Telegram's rate limits.
 const editInterval = 500 * time.Millisecond
 
+// BotAPI is the minimal interface the Handler needs from the Telegram bot
+// library. *tgbotapi.BotAPI satisfies this interface directly; tests may
+// supply a mock.
+type BotAPI interface {
+	Send(c tgbotapi.Chattable) (tgbotapi.Message, error)
+	GetFileDirectURL(fileID string) (string, error)
+	GetUpdatesChan(config tgbotapi.UpdateConfig) tgbotapi.UpdatesChannel
+	StopReceivingUpdates()
+}
+
 // Handler listens for Telegram updates and routes them through the shared
 // Dispatcher (router.Router). One Handler per bot token.
 type Handler struct {
-	bot        *tgbotapi.BotAPI
+	bot        BotAPI
+	username   string // bot's own username, set by New() from Self.UserName
 	dispatcher web.Dispatcher
 	allowedUID int64  // silently drop messages from any other user ID
 	log        *slog.Logger
@@ -48,11 +59,31 @@ func New(dispatcher web.Dispatcher, token string, allowedUID int64) (*Handler, e
 	}
 	return &Handler{
 		bot:        bot,
+		username:   bot.Self.UserName,
 		dispatcher: dispatcher,
 		allowedUID: allowedUID,
 		log:        slog.Default(),
 		httpClient: http.DefaultClient,
 	}, nil
+}
+
+// NewForTest creates a Handler for testing, bypassing Telegram token
+// validation. bot is a mock implementation of BotAPI.
+func NewForTest(dispatcher web.Dispatcher, bot BotAPI, allowedUID int64) *Handler {
+	return &Handler{
+		bot:        bot,
+		username:   "testbot",
+		dispatcher: dispatcher,
+		allowedUID: allowedUID,
+		log:        slog.Default(),
+		httpClient: http.DefaultClient,
+	}
+}
+
+// HandleMessage exposes handleMessage for integration testing without going
+// through the long-polling loop in Start().
+func (h *Handler) HandleMessage(ctx context.Context, msg *tgbotapi.Message) {
+	h.handleMessage(ctx, msg)
 }
 
 // Start begins long-polling for updates and blocks until ctx is cancelled.
@@ -62,7 +93,7 @@ func (h *Handler) Start(ctx context.Context) error {
 	updates := h.bot.GetUpdatesChan(cfg)
 
 	h.log.Info("telegram channel started",
-		"bot_username", h.bot.Self.UserName,
+		"bot_username", h.username,
 		"allowed_uid", h.allowedUID,
 	)
 
