@@ -327,10 +327,13 @@ func (h *Handler) sendResponse(ctx context.Context, to watypes.JID, sid, text st
 			h.log.WarnContext(ctx, "whatsapp: TTS failed, sending text",
 				"session_id", sid, "error", err)
 		} else if len(data) > 0 {
+			h.log.InfoContext(ctx, "whatsapp: sending TTS audio response",
+				"session_id", sid, "mime", mime, "bytes", len(data))
 			if sendErr := h.sendAudio(ctx, to, data, mime); sendErr != nil {
 				h.log.WarnContext(ctx, "whatsapp: audio send failed, falling back to text",
 					"session_id", sid, "error", sendErr)
 			} else {
+				h.log.InfoContext(ctx, "whatsapp: TTS audio sent successfully", "session_id", sid)
 				return
 			}
 		}
@@ -340,6 +343,12 @@ func (h *Handler) sendResponse(ctx context.Context, to watypes.JID, sid, text st
 
 // sendAudio uploads audio data to WhatsApp servers and sends it as a voice note.
 func (h *Handler) sendAudio(ctx context.Context, to watypes.JID, data []byte, mimeType string) error {
+	// WhatsApp mobile requires exactly "audio/ogg; codecs=opus" to render PTT
+	// voice notes. TTS endpoints may return "audio/opus" or "audio/ogg" for the
+	// same OGG/Opus container — normalise here so mobile always plays correctly.
+	if strings.Contains(mimeType, "opus") || strings.Contains(mimeType, "ogg") {
+		mimeType = "audio/ogg; codecs=opus"
+	}
 	uploaded, err := h.sender.Upload(ctx, data, whatsmeow.MediaAudio)
 	if err != nil {
 		return fmt.Errorf("whatsapp: upload audio: %w", err)
