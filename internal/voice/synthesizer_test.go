@@ -145,7 +145,7 @@ func TestCostguardSynthesizer_ContentTypeStripsParams(t *testing.T) {
 	}
 }
 
-func TestCostguardSynthesizer_MissingContentType_DefaultsToMPEG(t *testing.T) {
+func TestCostguardSynthesizer_MissingContentType_DefaultsToOGG(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Explicitly clear Content-Type before writing so the synthesizer
 		// uses its own default. WriteHeader prevents auto-sniffing.
@@ -160,8 +160,26 @@ func TestCostguardSynthesizer_MissingContentType_DefaultsToMPEG(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
-	if mime != "audio/mpeg" {
-		t.Errorf("mimeType = %q, want audio/mpeg", mime)
+	// Default response_format is "opus" → OGG container.
+	if mime != "audio/ogg" {
+		t.Errorf("mimeType = %q, want audio/ogg", mime)
+	}
+}
+
+func TestCostguardSynthesizer_ResponseFormatSent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body) //nolint:errcheck
+		if body["response_format"] != "opus" {
+			t.Errorf("response_format = %q, want opus", body["response_format"])
+		}
+		w.Write([]byte("ogg bytes")) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	s := voice.NewCostguardSynthesizer(srv.URL, "", "alloy", "") // "" → "opus" default
+	if _, _, err := s.Synthesize(context.Background(), "hi"); err != nil {
+		t.Fatalf("Synthesize: %v", err)
 	}
 }
 
