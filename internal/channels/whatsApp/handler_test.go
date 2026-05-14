@@ -419,11 +419,14 @@ func TestBuildMsgParts_ImageOnlyNoText(t *testing.T) {
 
 // ── voice test helpers ────────────────────────────────────────────────────────
 
-// stubSender satisfies msgSender and records the text of every sent message.
+// stubSender satisfies msgSender and records the text of every sent message
+// and any uploaded audio data.
 type stubSender struct {
-	mu   sync.Mutex
-	sent []string
-	err  error
+	mu          sync.Mutex
+	sent        []string
+	sentAudio   [][]byte
+	err         error
+	uploadErr   error
 }
 
 func (s *stubSender) SendMessage(_ context.Context, _ watypes.JID, msg *waE2E.Message, _ ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error) {
@@ -433,6 +436,13 @@ func (s *stubSender) SendMessage(_ context.Context, _ watypes.JID, msg *waE2E.Me
 		s.sent = append(s.sent, *msg.Conversation)
 	}
 	return whatsmeow.SendResponse{}, s.err
+}
+
+func (s *stubSender) Upload(_ context.Context, data []byte, _ whatsmeow.MediaType) (whatsmeow.UploadResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sentAudio = append(s.sentAudio, data)
+	return whatsmeow.UploadResponse{}, s.uploadErr
 }
 
 // stubTranscriber is a controllable voice.Transcriber.
@@ -477,14 +487,15 @@ func makeAudioEvent(userJID string, mimeType string) *events.Message {
 	}
 }
 
-// newVoiceHandler builds a Handler wired for voice tests.
-func newVoiceHandler(d mediaDownloader, s *stubSender, tr voice.Transcriber, disp *recordingDispatcher) *Handler {
+// newVoiceHandler builds a Handler wired for voice/TTS tests.
+func newVoiceHandler(d mediaDownloader, s *stubSender, tr voice.Transcriber, synth voice.Synthesizer, disp *recordingDispatcher) *Handler {
 	return &Handler{
 		downloader:  d,
 		sender:      s,
 		dispatcher:  disp,
 		allowedJID:  "96170123456@s.whatsapp.net",
 		transcriber: tr,
+		synthesizer: synth,
 		log:         slog.Default(),
 	}
 }
@@ -497,7 +508,7 @@ func TestVoice_TranscribedTextRoutedWithPrefix(t *testing.T) {
 	tr := &stubTranscriber{text: "hello from voice"}
 	disp := &recordingDispatcher{}
 
-	h := newVoiceHandler(dl, sender, tr, disp)
+	h := newVoiceHandler(dl, sender, tr, &voice.NoopSynthesizer{}, disp)
 	h.onMessage(makeAudioEvent("96170123456", "audio/ogg"))
 
 	if len(disp.received) != 1 {
@@ -519,7 +530,7 @@ func TestVoice_NoopTranscriber_SendsHelpfulReply(t *testing.T) {
 	tr := &voice.NoopTranscriber{}
 	disp := &recordingDispatcher{}
 
-	h := newVoiceHandler(dl, sender, tr, disp)
+	h := newVoiceHandler(dl, sender, tr, &voice.NoopSynthesizer{}, disp)
 	h.onMessage(makeAudioEvent("96170123456", "audio/ogg"))
 
 	if len(disp.received) != 0 {
@@ -539,7 +550,7 @@ func TestVoice_TranscriptionError_NotifiesUser(t *testing.T) {
 	tr := &stubTranscriber{err: errors.New("whisper unavailable")}
 	disp := &recordingDispatcher{}
 
-	h := newVoiceHandler(dl, sender, tr, disp)
+	h := newVoiceHandler(dl, sender, tr, &voice.NoopSynthesizer{}, disp)
 	h.onMessage(makeAudioEvent("96170123456", "audio/ogg"))
 
 	if len(disp.received) != 0 {
@@ -559,7 +570,7 @@ func TestVoice_DownloadError_NotifiesUser(t *testing.T) {
 	tr := &stubTranscriber{text: "should not reach this"}
 	disp := &recordingDispatcher{}
 
-	h := newVoiceHandler(dl, sender, tr, disp)
+	h := newVoiceHandler(dl, sender, tr, &voice.NoopSynthesizer{}, disp)
 	h.onMessage(makeAudioEvent("96170123456", "audio/ogg"))
 
 	if len(disp.received) != 0 {
@@ -579,7 +590,7 @@ func TestVoice_NonWhitelistedSender_Dropped(t *testing.T) {
 	tr := &stubTranscriber{text: "spy message"}
 	disp := &recordingDispatcher{}
 
-	h := newVoiceHandler(dl, sender, tr, disp)
+	h := newVoiceHandler(dl, sender, tr, &voice.NoopSynthesizer{}, disp)
 	// Send from a different JID than allowedJID.
 	h.onMessage(makeAudioEvent("999999999", "audio/ogg"))
 

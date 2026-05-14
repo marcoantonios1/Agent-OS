@@ -39,9 +39,11 @@ type mediaDownloader interface {
 	DownloadAny(ctx context.Context, msg *waE2E.Message) ([]byte, error)
 }
 
-// msgSender abstracts whatsmeow.Client.SendMessage for testing.
+// msgSender abstracts the WhatsApp client methods needed to send messages and
+// upload media, allowing both to be mocked in tests.
 type msgSender interface {
 	SendMessage(ctx context.Context, to watypes.JID, message *waE2E.Message, extra ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error)
+	Upload(ctx context.Context, plaintext []byte, appInfo whatsmeow.MediaType) (whatsmeow.UploadResponse, error)
 }
 
 // Handler listens for WhatsApp messages and routes them through the shared
@@ -54,8 +56,13 @@ type Handler struct {
 	dispatcher  web.Dispatcher
 	allowedJID  string           // only respond to this JID; validated non-empty by New
 	transcriber voice.Transcriber
+	synthesizer voice.Synthesizer
 	log         *slog.Logger
 }
+
+// SetSynthesizer replaces the handler's synthesizer. When set and the inbound
+// message was a voice message, the agent response is synthesized back to audio.
+func (h *Handler) SetSynthesizer(s voice.Synthesizer) { h.synthesizer = s }
 
 // New creates a Handler.
 //   - dispatcher is the router (satisfies web.Dispatcher and optionally web.StreamDispatcher).
@@ -89,6 +96,7 @@ func New(dispatcher web.Dispatcher, storePath, allowedJID string, transcriber vo
 		dispatcher:  dispatcher,
 		allowedJID:  allowedJID,
 		transcriber: transcriber,
+		synthesizer: &voice.NoopSynthesizer{},
 		log:         slog.Default(),
 	}
 	client.AddEventHandler(h.onEvent)
@@ -178,9 +186,11 @@ func (h *Handler) onMessage(evt *events.Message) {
 	}
 
 	text := extractText(evt.Message)
+	wasVoice := false
 
 	// Handle voice/audio messages via transcription.
 	if audio := evt.Message.GetAudioMessage(); audio != nil {
+		wasVoice = true
 		h.log.InfoContext(ctx, "whatsapp: audio message received", "from", senderJID)
 		if h.transcriber == nil {
 			h.log.WarnContext(ctx, "whatsapp: no transcriber configured — prompting user to type")
@@ -240,22 +250,25 @@ func (h *Handler) onMessage(evt *events.Message) {
 		Parts:     buildMsgParts(text, attParts),
 	}
 
-	h.routeAndRespond(ctx, chat, inbound, sid, start)
+	h.routeAndRespond(ctx, chat, inbound, sid, start, wasVoice)
 }
 
 // routeAndRespond dispatches inbound via RouteStream when the dispatcher
 // supports it, falling back to blocking Route() on error or when unavailable.
+// wasVoice indicates the inbound message was audio; when true the response is
+// synthesized back to audio if a Synthesizer is configured.
 func (h *Handler) routeAndRespond(
 	ctx context.Context,
 	chat watypes.JID,
 	inbound agenttypes.InboundMessage,
 	sid string,
 	start time.Time,
+	wasVoice bool,
 ) {
 	if sd, ok := h.dispatcher.(web.StreamDispatcher); ok {
 		chunks, err := sd.RouteStream(ctx, inbound)
 		if err == nil {
-			h.respondStreaming(ctx, chat, sid, start, chunks)
+			h.respondStreaming(ctx, chat, sid, start, chunks, wasVoice)
 			return
 		}
 		h.log.WarnContext(ctx, "whatsapp: stream route failed, falling back to blocking",
@@ -274,7 +287,7 @@ func (h *Handler) routeAndRespond(
 		"latency_ms", time.Since(start).Milliseconds(),
 		"channel", "whatsapp",
 	)
-	h.send(ctx, chat, out.Text) //nolint:errcheck
+	h.sendResponse(ctx, chat, sid, out.Text, wasVoice)
 }
 
 // respondStreaming collects all chunks from the channel and sends a single
@@ -286,6 +299,7 @@ func (h *Handler) respondStreaming(
 	sid string,
 	start time.Time,
 	chunks <-chan string,
+	wasVoice bool,
 ) {
 	var sb strings.Builder
 	for chunk := range chunks {
@@ -301,7 +315,50 @@ func (h *Handler) respondStreaming(
 		"latency_ms", time.Since(start).Milliseconds(),
 		"channel", "whatsapp-stream",
 	)
-	h.send(ctx, chat, text) //nolint:errcheck
+	h.sendResponse(ctx, chat, sid, text, wasVoice)
+}
+
+// sendResponse sends the agent reply as audio when the original message was a
+// voice message and synthesis succeeds; otherwise sends plain text.
+func (h *Handler) sendResponse(ctx context.Context, to watypes.JID, sid, text string, wasVoice bool) {
+	if wasVoice {
+		data, mime, err := h.synthesizer.Synthesize(ctx, text)
+		if err != nil {
+			h.log.WarnContext(ctx, "whatsapp: TTS failed, sending text",
+				"session_id", sid, "error", err)
+		} else if len(data) > 0 {
+			if sendErr := h.sendAudio(ctx, to, data, mime); sendErr != nil {
+				h.log.WarnContext(ctx, "whatsapp: audio send failed, falling back to text",
+					"session_id", sid, "error", sendErr)
+			} else {
+				return
+			}
+		}
+	}
+	h.send(ctx, to, text) //nolint:errcheck
+}
+
+// sendAudio uploads audio data to WhatsApp servers and sends it as a voice note.
+func (h *Handler) sendAudio(ctx context.Context, to watypes.JID, data []byte, mimeType string) error {
+	uploaded, err := h.sender.Upload(ctx, data, whatsmeow.MediaAudio)
+	if err != nil {
+		return fmt.Errorf("whatsapp: upload audio: %w", err)
+	}
+	fileLen := uploaded.FileLength
+	ptt := true
+	_, err = h.sender.SendMessage(ctx, to, &waE2E.Message{
+		AudioMessage: &waE2E.AudioMessage{
+			URL:           &uploaded.URL,
+			DirectPath:    &uploaded.DirectPath,
+			MediaKey:      uploaded.MediaKey,
+			FileEncSHA256: uploaded.FileEncSHA256,
+			FileSHA256:    uploaded.FileSHA256,
+			FileLength:    &fileLen,
+			Mimetype:      &mimeType,
+			PTT:           &ptt,
+		},
+	})
+	return err
 }
 
 // send delivers a text message to the given WhatsApp JID.
