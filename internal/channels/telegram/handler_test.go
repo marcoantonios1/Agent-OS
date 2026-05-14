@@ -2,9 +2,18 @@ package telegram
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+
 	"github.com/marcoantonios1/Agent-OS/internal/sessions"
+	"github.com/marcoantonios1/Agent-OS/internal/types"
+	"github.com/marcoantonios1/Agent-OS/internal/voice"
 )
 
 // ── sessionKey ────────────────────────────────────────────────────────────────
