@@ -419,11 +419,14 @@ func TestBuildMsgParts_ImageOnlyNoText(t *testing.T) {
 
 // ── voice test helpers ────────────────────────────────────────────────────────
 
-// stubSender satisfies msgSender and records the text of every sent message.
+// stubSender satisfies msgSender and records the text of every sent message
+// and any uploaded audio data.
 type stubSender struct {
-	mu   sync.Mutex
-	sent []string
-	err  error
+	mu          sync.Mutex
+	sent        []string
+	sentAudio   [][]byte
+	err         error
+	uploadErr   error
 }
 
 func (s *stubSender) SendMessage(_ context.Context, _ watypes.JID, msg *waE2E.Message, _ ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error) {
@@ -433,6 +436,13 @@ func (s *stubSender) SendMessage(_ context.Context, _ watypes.JID, msg *waE2E.Me
 		s.sent = append(s.sent, *msg.Conversation)
 	}
 	return whatsmeow.SendResponse{}, s.err
+}
+
+func (s *stubSender) Upload(_ context.Context, data []byte, _ whatsmeow.MediaType) (whatsmeow.UploadResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sentAudio = append(s.sentAudio, data)
+	return whatsmeow.UploadResponse{}, s.uploadErr
 }
 
 // stubTranscriber is a controllable voice.Transcriber.
@@ -477,14 +487,15 @@ func makeAudioEvent(userJID string, mimeType string) *events.Message {
 	}
 }
 
-// newVoiceHandler builds a Handler wired for voice tests.
-func newVoiceHandler(d mediaDownloader, s *stubSender, tr voice.Transcriber, disp *recordingDispatcher) *Handler {
+// newVoiceHandler builds a Handler wired for voice/TTS tests.
+func newVoiceHandler(d mediaDownloader, s *stubSender, tr voice.Transcriber, synth voice.Synthesizer, disp *recordingDispatcher) *Handler {
 	return &Handler{
 		downloader:  d,
 		sender:      s,
 		dispatcher:  disp,
 		allowedJID:  "96170123456@s.whatsapp.net",
 		transcriber: tr,
+		synthesizer: synth,
 		log:         slog.Default(),
 	}
 }
@@ -497,7 +508,7 @@ func TestVoice_TranscribedTextRoutedWithPrefix(t *testing.T) {
 	tr := &stubTranscriber{text: "hello from voice"}
 	disp := &recordingDispatcher{}
 
-	h := newVoiceHandler(dl, sender, tr, disp)
+	h := newVoiceHandler(dl, sender, tr, &voice.NoopSynthesizer{}, disp)
 	h.onMessage(makeAudioEvent("96170123456", "audio/ogg"))
 
 	if len(disp.received) != 1 {
@@ -519,7 +530,7 @@ func TestVoice_NoopTranscriber_SendsHelpfulReply(t *testing.T) {
 	tr := &voice.NoopTranscriber{}
 	disp := &recordingDispatcher{}
 
-	h := newVoiceHandler(dl, sender, tr, disp)
+	h := newVoiceHandler(dl, sender, tr, &voice.NoopSynthesizer{}, disp)
 	h.onMessage(makeAudioEvent("96170123456", "audio/ogg"))
 
 	if len(disp.received) != 0 {
@@ -539,7 +550,7 @@ func TestVoice_TranscriptionError_NotifiesUser(t *testing.T) {
 	tr := &stubTranscriber{err: errors.New("whisper unavailable")}
 	disp := &recordingDispatcher{}
 
-	h := newVoiceHandler(dl, sender, tr, disp)
+	h := newVoiceHandler(dl, sender, tr, &voice.NoopSynthesizer{}, disp)
 	h.onMessage(makeAudioEvent("96170123456", "audio/ogg"))
 
 	if len(disp.received) != 0 {
@@ -559,7 +570,7 @@ func TestVoice_DownloadError_NotifiesUser(t *testing.T) {
 	tr := &stubTranscriber{text: "should not reach this"}
 	disp := &recordingDispatcher{}
 
-	h := newVoiceHandler(dl, sender, tr, disp)
+	h := newVoiceHandler(dl, sender, tr, &voice.NoopSynthesizer{}, disp)
 	h.onMessage(makeAudioEvent("96170123456", "audio/ogg"))
 
 	if len(disp.received) != 0 {
@@ -579,11 +590,120 @@ func TestVoice_NonWhitelistedSender_Dropped(t *testing.T) {
 	tr := &stubTranscriber{text: "spy message"}
 	disp := &recordingDispatcher{}
 
-	h := newVoiceHandler(dl, sender, tr, disp)
+	h := newVoiceHandler(dl, sender, tr, &voice.NoopSynthesizer{}, disp)
 	// Send from a different JID than allowedJID.
 	h.onMessage(makeAudioEvent("999999999", "audio/ogg"))
 
 	if len(disp.received) != 0 || len(sender.sent) != 0 {
 		t.Error("non-whitelisted sender should be silently dropped")
+	}
+}
+
+// ── TTS tests ─────────────────────────────────────────────────────────────────
+
+// stubSynthesizer is a controllable voice.Synthesizer.
+type stubSynthesizer struct {
+	data    []byte
+	mime    string
+	err     error
+}
+
+func (s *stubSynthesizer) Synthesize(_ context.Context, _ string) ([]byte, string, error) {
+	return s.data, s.mime, s.err
+}
+
+func TestTTS_VoiceInput_AudioSent(t *testing.T) {
+	audioResponse := []byte("synthesized mp3")
+	dl := &stubDownloader{data: []byte("fake ogg")}
+	sender := &stubSender{}
+	tr := &stubTranscriber{text: "transcribed text"}
+	synth := &stubSynthesizer{data: audioResponse, mime: "audio/mpeg"}
+	disp := &recordingDispatcher{}
+
+	h := newVoiceHandler(dl, sender, tr, synth, disp)
+	h.onMessage(makeAudioEvent("96170123456", "audio/ogg"))
+
+	if len(sender.sentAudio) != 1 {
+		t.Fatalf("expected 1 uploaded audio, got %d", len(sender.sentAudio))
+	}
+	if string(sender.sentAudio[0]) != string(audioResponse) {
+		t.Errorf("uploaded audio mismatch")
+	}
+	// Text send should not be called — audio was sent instead.
+	if len(sender.sent) != 0 {
+		t.Errorf("text send should not be called when TTS succeeds, got %v", sender.sent)
+	}
+}
+
+func TestTTS_VoiceInput_SynthesisFails_FallsBackToText(t *testing.T) {
+	dl := &stubDownloader{data: []byte("fake ogg")}
+	sender := &stubSender{}
+	tr := &stubTranscriber{text: "transcribed text"}
+	synth := &stubSynthesizer{err: errors.New("tts unavailable")}
+	disp := &recordingDispatcher{}
+
+	h := newVoiceHandler(dl, sender, tr, synth, disp)
+	h.onMessage(makeAudioEvent("96170123456", "audio/ogg"))
+
+	if len(sender.sentAudio) != 0 {
+		t.Errorf("no audio should be uploaded on synthesis error, got %d", len(sender.sentAudio))
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("expected 1 text fallback reply, got %d", len(sender.sent))
+	}
+}
+
+func TestTTS_VoiceInput_NoopSynthesizer_SendsText(t *testing.T) {
+	dl := &stubDownloader{data: []byte("fake ogg")}
+	sender := &stubSender{}
+	tr := &stubTranscriber{text: "transcribed text"}
+	disp := &recordingDispatcher{}
+
+	h := newVoiceHandler(dl, sender, tr, &voice.NoopSynthesizer{}, disp)
+	h.onMessage(makeAudioEvent("96170123456", "audio/ogg"))
+
+	if len(sender.sentAudio) != 0 {
+		t.Errorf("noop synthesizer should not upload audio, got %d", len(sender.sentAudio))
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("expected 1 text reply, got %d", len(sender.sent))
+	}
+}
+
+func TestTTS_TextInput_NeverSynthesized(t *testing.T) {
+	// Even with TTS configured, a text message must get a text response.
+	audioResponse := []byte("synthesized mp3")
+	sender := &stubSender{}
+	synth := &stubSynthesizer{data: audioResponse, mime: "audio/mpeg"}
+	disp := &recordingDispatcher{}
+	h := &Handler{
+		downloader:  &stubDownloader{},
+		sender:      sender,
+		dispatcher:  disp,
+		allowedJID:  "96170123456@s.whatsapp.net",
+		transcriber: &voice.NoopTranscriber{},
+		synthesizer: synth,
+		log:         slog.Default(),
+	}
+
+	// Construct a plain text WhatsApp event.
+	jid := watypes.JID{User: "96170123456", Server: watypes.DefaultUserServer}
+	evt := &events.Message{
+		Info: watypes.MessageInfo{
+			MessageSource: watypes.MessageSource{
+				Chat:     jid,
+				Sender:   jid,
+				IsFromMe: false,
+			},
+		},
+		Message: &waE2E.Message{Conversation: strPtr("Hello!")},
+	}
+	h.onMessage(evt)
+
+	if len(sender.sentAudio) != 0 {
+		t.Errorf("text input should never trigger TTS, got %d audio uploads", len(sender.sentAudio))
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("expected 1 text reply, got %d", len(sender.sent))
 	}
 }

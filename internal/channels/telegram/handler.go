@@ -44,18 +44,23 @@ type BotAPI interface {
 // Handler listens for Telegram updates and routes them through the shared
 // Dispatcher (router.Router). One Handler per bot token.
 type Handler struct {
-	bot        BotAPI
-	username   string // bot's own username, set by New() from Self.UserName
-	dispatcher web.Dispatcher
-	allowedUID int64  // silently drop messages from any other user ID
+	bot         BotAPI
+	username    string // bot's own username, set by New() from Self.UserName
+	dispatcher  web.Dispatcher
+	allowedUID  int64 // silently drop messages from any other user ID
 	transcriber voice.Transcriber
-	log        *slog.Logger
-	httpClient *http.Client
+	synthesizer voice.Synthesizer
+	log         *slog.Logger
+	httpClient  *http.Client
 }
 
 // SetTranscriber replaces the handler's transcriber. Call after New() to enable
 // voice-to-text; omitting it leaves the NoopTranscriber default in place.
 func (h *Handler) SetTranscriber(t voice.Transcriber) { h.transcriber = t }
+
+// SetSynthesizer replaces the handler's synthesizer. When set and the inbound
+// message was a voice message, the agent response is synthesized back to audio.
+func (h *Handler) SetSynthesizer(s voice.Synthesizer) { h.synthesizer = s }
 
 // New creates a Handler and validates the bot token by calling GetMe.
 // Returns an error if the token is invalid or the Telegram API is unreachable.
@@ -70,6 +75,7 @@ func New(dispatcher web.Dispatcher, token string, allowedUID int64) (*Handler, e
 		dispatcher:  dispatcher,
 		allowedUID:  allowedUID,
 		transcriber: &voice.NoopTranscriber{},
+		synthesizer: &voice.NoopSynthesizer{},
 		log:         slog.Default(),
 		httpClient:  http.DefaultClient,
 	}, nil
@@ -84,6 +90,7 @@ func NewForTest(dispatcher web.Dispatcher, bot BotAPI, allowedUID int64) *Handle
 		dispatcher:  dispatcher,
 		allowedUID:  allowedUID,
 		transcriber: &voice.NoopTranscriber{},
+		synthesizer: &voice.NoopSynthesizer{},
 		log:         slog.Default(),
 		httpClient:  http.DefaultClient,
 	}
@@ -171,7 +178,7 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 			return
 		}
 		inbound := h.buildInbound(msg, sid, parts)
-		h.routeAndRespond(ctx, msg.Chat.ID, sid, inbound)
+		h.routeAndRespond(ctx, msg.Chat.ID, sid, inbound, false)
 
 	case msg.Document != nil:
 		doc := msg.Document
@@ -188,11 +195,11 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 			return
 		}
 		inbound := h.buildInbound(msg, sid, parts)
-		h.routeAndRespond(ctx, msg.Chat.ID, sid, inbound)
+		h.routeAndRespond(ctx, msg.Chat.ID, sid, inbound, false)
 
 	case msg.Text != "":
 		inbound := h.buildInbound(msg, sid, nil)
-		h.routeAndRespond(ctx, msg.Chat.ID, sid, inbound)
+		h.routeAndRespond(ctx, msg.Chat.ID, sid, inbound, false)
 
 	default:
 		h.sendText(msg.Chat.ID,
@@ -243,7 +250,7 @@ func (h *Handler) handleAudio(ctx context.Context, msg *tgbotapi.Message, sid, f
 		Text:      fmt.Sprintf("[Voice message transcribed]: %s", text),
 		Timestamp: time.Now(),
 	}
-	h.routeAndRespond(ctx, msg.Chat.ID, sid, inbound)
+	h.routeAndRespond(ctx, msg.Chat.ID, sid, inbound, true)
 }
 
 // buildInbound constructs a types.InboundMessage from a Telegram message.
@@ -269,12 +276,14 @@ func (h *Handler) buildInbound(msg *tgbotapi.Message, sid string, attParts []typ
 
 // routeAndRespond dispatches inbound via streaming when the dispatcher supports
 // it, falling back to blocking Route() on error or when streaming is unavailable.
-func (h *Handler) routeAndRespond(ctx context.Context, chatID int64, sid string, inbound types.InboundMessage) {
+// wasVoice indicates the inbound message was audio; when true the response is
+// synthesized back to audio if a Synthesizer is configured.
+func (h *Handler) routeAndRespond(ctx context.Context, chatID int64, sid string, inbound types.InboundMessage, wasVoice bool) {
 	start := time.Now()
 	if sd, ok := h.dispatcher.(web.StreamDispatcher); ok {
 		chunks, err := sd.RouteStream(ctx, inbound)
 		if err == nil {
-			h.respondStreaming(ctx, chatID, sid, start, chunks)
+			h.respondStreaming(ctx, chatID, sid, start, chunks, wasVoice)
 			return
 		}
 		h.log.WarnContext(ctx, "telegram: stream route failed, falling back to blocking",
@@ -289,20 +298,50 @@ func (h *Handler) routeAndRespond(ctx context.Context, chatID int64, sid string,
 	}
 	h.log.InfoContext(ctx, "channel_response",
 		"session_id", sid, "latency_ms", time.Since(start).Milliseconds(), "channel", "telegram")
-	for _, part := range splitMessage(out.Text, maxMessageLen) {
+	h.sendResponse(ctx, chatID, sid, out.Text, wasVoice)
+}
+
+// sendResponse sends the agent reply as audio when the original message was a
+// voice message and synthesis succeeds; otherwise sends plain text.
+func (h *Handler) sendResponse(ctx context.Context, chatID int64, sid, text string, wasVoice bool) {
+	if wasVoice {
+		data, mime, err := h.synthesizer.Synthesize(ctx, text)
+		if err != nil {
+			h.log.WarnContext(ctx, "telegram: TTS failed, sending text",
+				"session_id", sid, "error", err)
+		} else if len(data) > 0 {
+			h.sendAudio(chatID, data, mime)
+			return
+		}
+	}
+	for _, part := range splitMessage(text, maxMessageLen) {
 		h.sendText(chatID, part)
+	}
+}
+
+// sendAudio sends audio bytes as a Telegram voice note.
+func (h *Handler) sendAudio(chatID int64, data []byte, mimeType string) {
+	name := "voice.ogg"
+	if !strings.Contains(mimeType, "ogg") {
+		name = "voice.mp3"
+	}
+	msg := tgbotapi.NewVoice(chatID, tgbotapi.FileBytes{Name: name, Bytes: data})
+	if _, err := h.bot.Send(msg); err != nil {
+		h.log.Warn("telegram: failed to send audio", "chat_id", chatID, "error", err)
 	}
 }
 
 // respondStreaming sends a "…" placeholder then edits it as tokens arrive,
 // throttled to editInterval. A final edit delivers the complete text; messages
-// over 4 096 chars are sent as additional messages.
+// over 4 096 chars are sent as additional messages. When wasVoice is true and
+// TTS succeeds, the placeholder is replaced with "🎤" and audio is sent.
 func (h *Handler) respondStreaming(
 	ctx context.Context,
 	chatID int64,
 	sid string,
 	start time.Time,
 	chunks <-chan string,
+	wasVoice bool,
 ) {
 	placeholder, err := h.bot.Send(tgbotapi.NewMessage(chatID, "…"))
 	if err != nil {
@@ -339,6 +378,21 @@ outerLoop:
 	if fullText == "" {
 		fullText = "(no response)"
 	}
+
+	if wasVoice {
+		data, mime, err := h.synthesizer.Synthesize(ctx, fullText)
+		if err != nil {
+			h.log.WarnContext(ctx, "telegram: TTS failed in streaming, sending text",
+				"session_id", sid, "error", err)
+		} else if len(data) > 0 {
+			h.editOrLog(ctx, chatID, msgID, sid, "🎤")
+			h.sendAudio(chatID, data, mime)
+			h.log.InfoContext(ctx, "channel_response",
+				"session_id", sid, "latency_ms", time.Since(start).Milliseconds(), "channel", "telegram-stream-tts")
+			return
+		}
+	}
+
 	parts := splitMessage(fullText, maxMessageLen)
 	h.editOrLog(ctx, chatID, msgID, sid, parts[0])
 	for _, extra := range parts[1:] {

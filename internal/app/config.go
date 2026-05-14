@@ -122,6 +122,21 @@ type Config struct {
 	// Env: VOICE_TRANSCRIPTION (default: "" — disabled)
 	VoiceTranscription string
 
+	// VoiceTTS enables text-to-speech synthesis of agent responses when the
+	// inbound message was a voice message. Set to "enabled" to activate.
+	// Env: VOICE_TTS (default: "" — disabled)
+	VoiceTTS string
+
+	// VoiceTTSVoice is the voice name passed to the TTS endpoint.
+	// Env: VOICE_TTS_VOICE (default: "alloy")
+	VoiceTTSVoice string
+
+	// VoiceTTSFormat is the audio format requested from the TTS endpoint.
+	// "opus" (default) produces OGG/Opus required by WhatsApp and Telegram mobile.
+	// "mp3" can be used if the endpoint does not support opus.
+	// Env: VOICE_TTS_FORMAT (default: "opus")
+	VoiceTTSFormat string
+
 	// ── Telegram channel ─────────────────────────────────────────────────────
 
 	// TelegramBotToken is the bot token obtained from @BotFather.
@@ -226,6 +241,9 @@ func Load(envFile string) (*Config, error) {
 		SessionTTL:        envDuration("SESSION_TTL", 24*time.Hour),
 
 		VoiceTranscription: os.Getenv("VOICE_TRANSCRIPTION"),
+		VoiceTTS:           os.Getenv("VOICE_TTS"),
+		VoiceTTSVoice:      envOr("VOICE_TTS_VOICE", "alloy"),
+		VoiceTTSFormat:     envOr("VOICE_TTS_FORMAT", "opus"),
 
 		TelegramBotToken:      os.Getenv("TELEGRAM_BOT_TOKEN"),
 		TelegramAllowedUserID: envInt64("TELEGRAM_ALLOWED_USER_ID", 0),
@@ -282,6 +300,11 @@ func (c *Config) DiscordConfigured() bool {
 // VoiceTranscriptionEnabled reports whether VOICE_TRANSCRIPTION=enabled.
 func (c *Config) VoiceTranscriptionEnabled() bool {
 	return c.VoiceTranscription == "enabled"
+}
+
+// VoiceTTSEnabled reports whether VOICE_TTS=enabled.
+func (c *Config) VoiceTTSEnabled() bool {
+	return c.VoiceTTS == "enabled"
 }
 
 // TelegramConfigured reports whether a Telegram bot token is present.
