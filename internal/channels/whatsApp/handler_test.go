@@ -6,13 +6,18 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	watypes "go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 
 	agenttypes "github.com/marcoantonios1/Agent-OS/internal/types"
+	"github.com/marcoantonios1/Agent-OS/internal/voice"
 )
 
 // ── sessionKey ────────────────────────────────────────────────────────────────
@@ -409,5 +414,176 @@ func TestBuildMsgParts_ImageOnlyNoText(t *testing.T) {
 	}
 	if parts[0].Type != "image" {
 		t.Errorf("expected image part, got %+v", parts[0])
+	}
+}
+
+// ── voice test helpers ────────────────────────────────────────────────────────
+
+// stubSender satisfies msgSender and records the text of every sent message.
+type stubSender struct {
+	mu   sync.Mutex
+	sent []string
+	err  error
+}
+
+func (s *stubSender) SendMessage(_ context.Context, _ watypes.JID, msg *waE2E.Message, _ ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if msg.Conversation != nil {
+		s.sent = append(s.sent, *msg.Conversation)
+	}
+	return whatsmeow.SendResponse{}, s.err
+}
+
+// stubTranscriber is a controllable voice.Transcriber.
+type stubTranscriber struct {
+	text string
+	err  error
+}
+
+func (t *stubTranscriber) Transcribe(_ context.Context, _ []byte, _ string) (string, error) {
+	return t.text, t.err
+}
+
+// recordingDispatcher satisfies web.Dispatcher and records every routed message.
+type recordingDispatcher struct {
+	mu       sync.Mutex
+	received []agenttypes.InboundMessage
+}
+
+func (d *recordingDispatcher) Route(_ context.Context, msg agenttypes.InboundMessage) (agenttypes.OutboundMessage, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.received = append(d.received, msg)
+	return agenttypes.OutboundMessage{Text: "ok"}, nil
+}
+
+// makeAudioEvent builds a minimal *events.Message with an AudioMessage payload.
+func makeAudioEvent(userJID string, mimeType string) *events.Message {
+	jid := watypes.JID{User: userJID, Server: watypes.DefaultUserServer}
+	return &events.Message{
+		Info: watypes.MessageInfo{
+			MessageSource: watypes.MessageSource{
+				Chat:     jid,
+				Sender:   jid,
+				IsFromMe: false,
+			},
+		},
+		Message: &waE2E.Message{
+			AudioMessage: &waE2E.AudioMessage{
+				Mimetype: strPtr(mimeType),
+			},
+		},
+	}
+}
+
+// newVoiceHandler builds a Handler wired for voice tests.
+func newVoiceHandler(d mediaDownloader, s *stubSender, tr voice.Transcriber, disp *recordingDispatcher) *Handler {
+	return &Handler{
+		downloader:  d,
+		sender:      s,
+		dispatcher:  disp,
+		allowedJID:  "96170123456@s.whatsapp.net",
+		transcriber: tr,
+		log:         slog.Default(),
+	}
+}
+
+// ── voice tests ───────────────────────────────────────────────────────────────
+
+func TestVoice_TranscribedTextRoutedWithPrefix(t *testing.T) {
+	dl := &stubDownloader{data: []byte("fake ogg")}
+	sender := &stubSender{}
+	tr := &stubTranscriber{text: "hello from voice"}
+	disp := &recordingDispatcher{}
+
+	h := newVoiceHandler(dl, sender, tr, disp)
+	h.onMessage(makeAudioEvent("96170123456", "audio/ogg"))
+
+	if len(disp.received) != 1 {
+		t.Fatalf("expected 1 dispatched message, got %d", len(disp.received))
+	}
+	want := "[Voice message transcribed]: hello from voice"
+	if disp.received[0].Text != want {
+		t.Errorf("routed text = %q, want %q", disp.received[0].Text, want)
+	}
+	// The handler sends the agent's reply back via sender — exactly 1 call expected.
+	if len(sender.sent) != 1 {
+		t.Errorf("expected 1 reply (agent response), got %d: %v", len(sender.sent), sender.sent)
+	}
+}
+
+func TestVoice_NoopTranscriber_SendsHelpfulReply(t *testing.T) {
+	dl := &stubDownloader{data: []byte("fake ogg")}
+	sender := &stubSender{}
+	tr := &voice.NoopTranscriber{}
+	disp := &recordingDispatcher{}
+
+	h := newVoiceHandler(dl, sender, tr, disp)
+	h.onMessage(makeAudioEvent("96170123456", "audio/ogg"))
+
+	if len(disp.received) != 0 {
+		t.Errorf("dispatcher should not be called for unsupported voice, got %d messages", len(disp.received))
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("expected 1 sent reply, got %d", len(sender.sent))
+	}
+	if !strings.Contains(sender.sent[0], "aren't supported") {
+		t.Errorf("reply %q should tell user voice isn't supported", sender.sent[0])
+	}
+}
+
+func TestVoice_TranscriptionError_NotifiesUser(t *testing.T) {
+	dl := &stubDownloader{data: []byte("fake ogg")}
+	sender := &stubSender{}
+	tr := &stubTranscriber{err: errors.New("whisper unavailable")}
+	disp := &recordingDispatcher{}
+
+	h := newVoiceHandler(dl, sender, tr, disp)
+	h.onMessage(makeAudioEvent("96170123456", "audio/ogg"))
+
+	if len(disp.received) != 0 {
+		t.Errorf("dispatcher should not be called on transcription error, got %d messages", len(disp.received))
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("expected 1 error reply, got %d", len(sender.sent))
+	}
+	if !strings.Contains(sender.sent[0], "couldn't transcribe") {
+		t.Errorf("reply %q should tell user transcription failed", sender.sent[0])
+	}
+}
+
+func TestVoice_DownloadError_NotifiesUser(t *testing.T) {
+	dl := &stubDownloader{err: errors.New("network error")}
+	sender := &stubSender{}
+	tr := &stubTranscriber{text: "should not reach this"}
+	disp := &recordingDispatcher{}
+
+	h := newVoiceHandler(dl, sender, tr, disp)
+	h.onMessage(makeAudioEvent("96170123456", "audio/ogg"))
+
+	if len(disp.received) != 0 {
+		t.Errorf("dispatcher should not be called on download error, got %d messages", len(disp.received))
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("expected 1 error reply, got %d", len(sender.sent))
+	}
+	if !strings.Contains(sender.sent[0], "couldn't download") {
+		t.Errorf("reply %q should mention download failure", sender.sent[0])
+	}
+}
+
+func TestVoice_NonWhitelistedSender_Dropped(t *testing.T) {
+	dl := &stubDownloader{data: []byte("ogg")}
+	sender := &stubSender{}
+	tr := &stubTranscriber{text: "spy message"}
+	disp := &recordingDispatcher{}
+
+	h := newVoiceHandler(dl, sender, tr, disp)
+	// Send from a different JID than allowedJID.
+	h.onMessage(makeAudioEvent("999999999", "audio/ogg"))
+
+	if len(disp.received) != 0 || len(sender.sent) != 0 {
+		t.Error("non-whitelisted sender should be silently dropped")
 	}
 }

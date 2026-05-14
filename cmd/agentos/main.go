@@ -191,12 +191,11 @@ func main() {
 	// Start WhatsApp channel if configured.
 	var whatsAppHandler *whatsapp.Handler
 	if cfg.WhatsAppConfigured() {
-		whatsAppHandler, err = whatsapp.New(r, cfg.WhatsAppStorePath, cfg.WhatsAppAllowedJID)
+		whatsAppHandler, err = whatsapp.New(r, cfg.WhatsAppStorePath, cfg.WhatsAppAllowedJID, transcriber)
 		if err != nil {
 			slog.Error("whatsapp: setup failed", "error", err)
 			os.Exit(1)
 		}
-		whatsAppHandler.SetTranscriber(transcriber)
 		reminderWorker.AddNotifier(whatsAppHandler)
 		go func() {
 			if err := whatsAppHandler.Start(ctx); err != nil {
