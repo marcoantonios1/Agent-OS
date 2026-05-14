@@ -39,28 +39,31 @@ type mediaDownloader interface {
 	DownloadAny(ctx context.Context, msg *waE2E.Message) ([]byte, error)
 }
 
+// msgSender abstracts whatsmeow.Client.SendMessage for testing.
+type msgSender interface {
+	SendMessage(ctx context.Context, to watypes.JID, message *waE2E.Message, extra ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error)
+}
+
 // Handler listens for WhatsApp messages and routes them through the shared
 // Dispatcher. Only messages from allowedJID are processed; all others are
 // silently dropped.
 type Handler struct {
 	client      *whatsmeow.Client
-	downloader  mediaDownloader   // defaults to client; overridden in tests
+	downloader  mediaDownloader  // defaults to client; overridden in tests
+	sender      msgSender        // defaults to client; overridden in tests
 	dispatcher  web.Dispatcher
-	allowedJID  string            // only respond to this JID; validated non-empty by New
-	transcriber voice.Transcriber // nil → voice messages silently rejected
+	allowedJID  string           // only respond to this JID; validated non-empty by New
+	transcriber voice.Transcriber
 	log         *slog.Logger
 }
-
-// SetTranscriber replaces the handler's transcriber. Call after New() to enable
-// voice-to-text; omitting it leaves voice messages unsupported.
-func (h *Handler) SetTranscriber(t voice.Transcriber) { h.transcriber = t }
 
 // New creates a Handler.
 //   - dispatcher is the router (satisfies web.Dispatcher and optionally web.StreamDispatcher).
 //   - storePath is the path to the SQLite DB that persists the device pairing session.
 //   - allowedJID is the only sender whose messages will be processed
 //     (e.g. "+96170123456@s.whatsapp.net"). Must be non-empty.
-func New(dispatcher web.Dispatcher, storePath, allowedJID string) (*Handler, error) {
+//   - transcriber converts voice messages to text; use &voice.NoopTranscriber{} to disable.
+func New(dispatcher web.Dispatcher, storePath, allowedJID string, transcriber voice.Transcriber) (*Handler, error) {
 	if allowedJID == "" {
 		return nil, fmt.Errorf("whatsapp: WHATSAPP_ALLOWED_JID is required when WhatsApp is enabled — set it to your personal number's JID")
 	}
@@ -80,11 +83,13 @@ func New(dispatcher web.Dispatcher, storePath, allowedJID string) (*Handler, err
 	client.EnableAutoReconnect = true
 
 	h := &Handler{
-		client:     client,
-		downloader: client,
-		dispatcher: dispatcher,
-		allowedJID: allowedJID,
-		log:        slog.Default(),
+		client:      client,
+		downloader:  client,
+		sender:      client,
+		dispatcher:  dispatcher,
+		allowedJID:  allowedJID,
+		transcriber: transcriber,
+		log:         slog.Default(),
 	}
 	client.AddEventHandler(h.onEvent)
 	return h, nil
@@ -200,7 +205,7 @@ func (h *Handler) onMessage(evt *events.Message) {
 			h.send(ctx, chat, "Sorry, I couldn't transcribe that voice message — please type your message.") //nolint:errcheck
 			return
 		}
-		text = transcribed
+		text = fmt.Sprintf("[Voice message transcribed]: %s", transcribed)
 	}
 
 	attParts, err := h.processMedia(ctx, evt.Message)
@@ -298,7 +303,7 @@ func (h *Handler) respondStreaming(
 
 // send delivers a text message to the given WhatsApp JID.
 func (h *Handler) send(ctx context.Context, to watypes.JID, text string) error {
-	_, err := h.client.SendMessage(ctx, to, &waE2E.Message{
+	_, err := h.sender.SendMessage(ctx, to, &waE2E.Message{
 		Conversation: strPtr(text),
 	})
 	if err != nil {
