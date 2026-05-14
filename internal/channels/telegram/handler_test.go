@@ -299,7 +299,7 @@ func TestVoice_TranscribedTextRoutedWithPrefix(t *testing.T) {
 	bot := &mockBot{fileURL: srv.URL}
 	tr := &stubTranscriber{text: "hello from voice"}
 	disp := &recordingDispatcher{}
-	h := newVoiceHandler(bot, tr, disp, srv)
+	h := newVoiceHandler(bot, tr, &voice.NoopSynthesizer{}, disp, srv)
 
 	h.handleMessage(context.Background(), voiceMessage(111, 100, "file1", "audio/ogg"))
 
@@ -319,7 +319,7 @@ func TestVoice_NoopTranscriber_SendsHelpfulReply(t *testing.T) {
 	bot := &mockBot{fileURL: srv.URL}
 	tr := &voice.NoopTranscriber{}
 	disp := &recordingDispatcher{}
-	h := newVoiceHandler(bot, tr, disp, srv)
+	h := newVoiceHandler(bot, tr, &voice.NoopSynthesizer{}, disp, srv)
 
 	h.handleMessage(context.Background(), voiceMessage(111, 100, "file1", "audio/ogg"))
 
@@ -341,7 +341,7 @@ func TestVoice_TranscriptionError_NotifiesUser(t *testing.T) {
 	bot := &mockBot{fileURL: srv.URL}
 	tr := &stubTranscriber{err: errors.New("whisper unavailable")}
 	disp := &recordingDispatcher{}
-	h := newVoiceHandler(bot, tr, disp, srv)
+	h := newVoiceHandler(bot, tr, &voice.NoopSynthesizer{}, disp, srv)
 
 	h.handleMessage(context.Background(), voiceMessage(111, 100, "file1", "audio/ogg"))
 
@@ -363,7 +363,7 @@ func TestVoice_FileURLError_NotifiesUser(t *testing.T) {
 	bot := &mockBot{fileErr: errors.New("file not found")}
 	tr := &stubTranscriber{text: "should not reach"}
 	disp := &recordingDispatcher{}
-	h := newVoiceHandler(bot, tr, disp, srv)
+	h := newVoiceHandler(bot, tr, &voice.NoopSynthesizer{}, disp, srv)
 
 	h.handleMessage(context.Background(), voiceMessage(111, 100, "file1", "audio/ogg"))
 
@@ -382,7 +382,7 @@ func TestVoice_NonWhitelistedSender_Dropped(t *testing.T) {
 	bot := &mockBot{fileURL: srv.URL}
 	tr := &stubTranscriber{text: "spy message"}
 	disp := &recordingDispatcher{}
-	h := newVoiceHandler(bot, tr, disp, srv)
+	h := newVoiceHandler(bot, tr, &voice.NoopSynthesizer{}, disp, srv)
 
 	h.handleMessage(context.Background(), voiceMessage(999, 100, "file1", "audio/ogg"))
 
@@ -398,7 +398,7 @@ func TestAudio_TranscribedTextRoutedWithPrefix(t *testing.T) {
 	bot := &mockBot{fileURL: srv.URL}
 	tr := &stubTranscriber{text: "audio file content"}
 	disp := &recordingDispatcher{}
-	h := newVoiceHandler(bot, tr, disp, srv)
+	h := newVoiceHandler(bot, tr, &voice.NoopSynthesizer{}, disp, srv)
 
 	h.handleMessage(context.Background(), audioMessage(111, 100, "file2", "audio/mpeg"))
 
@@ -419,7 +419,7 @@ func TestAudio_DefaultMimeType(t *testing.T) {
 	tr := &captureTranscriber{}
 	bot := &mockBot{fileURL: srv.URL}
 	disp := &recordingDispatcher{}
-	h := newVoiceHandler(bot, tr, disp, srv)
+	h := newVoiceHandler(bot, tr, &voice.NoopSynthesizer{}, disp, srv)
 	_ = capturedMime
 
 	// Audio message with empty MimeType — handler should default to audio/mpeg.
@@ -438,7 +438,7 @@ func TestVoice_DefaultMimeType(t *testing.T) {
 	tr := &captureTranscriber{}
 	bot := &mockBot{fileURL: srv.URL}
 	disp := &recordingDispatcher{}
-	h := newVoiceHandler(bot, tr, disp, srv)
+	h := newVoiceHandler(bot, tr, &voice.NoopSynthesizer{}, disp, srv)
 
 	// Voice message with empty MimeType — handler should default to audio/ogg.
 	msg := voiceMessage(111, 100, "file1", "")
@@ -457,4 +457,107 @@ type captureTranscriber struct {
 func (c *captureTranscriber) Transcribe(_ context.Context, _ []byte, mimeType string) (string, error) {
 	c.capturedMime = mimeType
 	return "ok", nil
+}
+
+// ── TTS tests ─────────────────────────────────────────────────────────────────
+
+func TestTTS_VoiceInput_AudioSent(t *testing.T) {
+	audioResponse := []byte("synthesized mp3")
+	srv := audioServer(t, []byte("fake ogg"))
+	defer srv.Close()
+
+	bot := &mockBot{fileURL: srv.URL}
+	tr := &stubTranscriber{text: "transcribed text"}
+	synth := &stubSynthesizer{data: audioResponse, mime: "audio/mpeg"}
+	disp := &recordingDispatcher{}
+	h := newVoiceHandler(bot, tr, synth, disp, srv)
+
+	h.handleMessage(context.Background(), voiceMessage(111, 100, "file1", "audio/ogg"))
+
+	// Dispatcher should be called with transcribed text.
+	if len(disp.received) != 1 {
+		t.Fatalf("expected 1 dispatched message, got %d", len(disp.received))
+	}
+	// The bot should have received a VoiceConfig (not a text MessageConfig).
+	// mockBot.Send records MessageConfig and EditMessageTextConfig texts —
+	// a VoiceConfig won't be captured as a string, so sent should be empty.
+	if len(bot.sent) != 0 {
+		t.Errorf("text send should not be called when TTS succeeds, got %v", bot.sent)
+	}
+}
+
+func TestTTS_VoiceInput_SynthesisFails_FallsBackToText(t *testing.T) {
+	srv := audioServer(t, []byte("fake ogg"))
+	defer srv.Close()
+
+	bot := &mockBot{fileURL: srv.URL}
+	tr := &stubTranscriber{text: "transcribed text"}
+	synth := &stubSynthesizer{err: errors.New("tts unavailable")}
+	disp := &recordingDispatcher{}
+	h := newVoiceHandler(bot, tr, synth, disp, srv)
+
+	h.handleMessage(context.Background(), voiceMessage(111, 100, "file1", "audio/ogg"))
+
+	if len(disp.received) != 1 {
+		t.Fatalf("expected 1 dispatched message, got %d", len(disp.received))
+	}
+	// Synthesis failed → must fall back to text reply.
+	if len(bot.sent) != 1 {
+		t.Fatalf("expected 1 text fallback reply, got %d: %v", len(bot.sent), bot.sent)
+	}
+}
+
+func TestTTS_VoiceInput_NoopSynthesizer_SendsText(t *testing.T) {
+	srv := audioServer(t, []byte("fake ogg"))
+	defer srv.Close()
+
+	bot := &mockBot{fileURL: srv.URL}
+	tr := &stubTranscriber{text: "transcribed text"}
+	disp := &recordingDispatcher{}
+	h := newVoiceHandler(bot, tr, &voice.NoopSynthesizer{}, disp, srv)
+
+	h.handleMessage(context.Background(), voiceMessage(111, 100, "file1", "audio/ogg"))
+
+	// NoopSynthesizer → text reply expected.
+	if len(bot.sent) != 1 {
+		t.Fatalf("expected 1 text reply, got %d: %v", len(bot.sent), bot.sent)
+	}
+	if bot.sent[0] != "agent reply" {
+		t.Errorf("reply = %q, want agent reply", bot.sent[0])
+	}
+}
+
+func TestTTS_TextInput_NeverSynthesized(t *testing.T) {
+	srv := audioServer(t, nil)
+	defer srv.Close()
+
+	audioResponse := []byte("synthesized mp3")
+	bot := &mockBot{}
+	synth := &stubSynthesizer{data: audioResponse, mime: "audio/mpeg"}
+	disp := &recordingDispatcher{}
+	h := &Handler{
+		bot:         bot,
+		username:    "testbot",
+		dispatcher:  disp,
+		allowedUID:  111,
+		transcriber: &voice.NoopTranscriber{},
+		synthesizer: synth,
+		log:         slog.Default(),
+		httpClient:  srv.Client(),
+	}
+
+	h.handleMessage(context.Background(), &tgbotapi.Message{
+		MessageID: 1,
+		From:      &tgbotapi.User{ID: 111},
+		Chat:      &tgbotapi.Chat{ID: 100},
+		Text:      "Hello!",
+	})
+
+	// Text input → only a text reply (VoiceConfig not recorded by mockBot).
+	if len(bot.sent) != 1 {
+		t.Fatalf("expected 1 text reply, got %d: %v", len(bot.sent), bot.sent)
+	}
+	if bot.sent[0] != "agent reply" {
+		t.Errorf("reply = %q, want agent reply", bot.sent[0])
+	}
 }
