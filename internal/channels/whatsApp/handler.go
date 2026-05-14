@@ -181,7 +181,9 @@ func (h *Handler) onMessage(evt *events.Message) {
 
 	// Handle voice/audio messages via transcription.
 	if audio := evt.Message.GetAudioMessage(); audio != nil {
+		h.log.InfoContext(ctx, "whatsapp: audio message received", "from", senderJID)
 		if h.transcriber == nil {
+			h.log.WarnContext(ctx, "whatsapp: no transcriber configured — prompting user to type")
 			h.send(ctx, chat, "Voice messages aren't supported yet — please type your message.") //nolint:errcheck
 			return
 		}
@@ -197,6 +199,7 @@ func (h *Handler) onMessage(evt *events.Message) {
 		}
 		transcribed, err := h.transcriber.Transcribe(ctx, data, mime)
 		if errors.Is(err, voice.ErrNotSupported) {
+			h.log.InfoContext(ctx, "whatsapp: voice transcription disabled (VOICE_TRANSCRIPTION not set to 'enabled')")
 			h.send(ctx, chat, "Voice messages aren't supported yet — please type your message.") //nolint:errcheck
 			return
 		}
