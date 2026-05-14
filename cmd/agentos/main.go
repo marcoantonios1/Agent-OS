@@ -173,6 +173,16 @@ func main() {
 		slog.Info("VOICE_TRANSCRIPTION not set — voice messages will prompt users to type instead")
 	}
 
+	// Build synthesizer — enabled only when VOICE_TTS=enabled.
+	var synthesizer voice.Synthesizer
+	if cfg.VoiceTTSEnabled() {
+		synthesizer = voice.NewCostguardSynthesizer(cfg.CostguardURL, cfg.CostguardAPIKey, cfg.VoiceTTSVoice)
+		slog.Info("voice TTS enabled", "voice", cfg.VoiceTTSVoice)
+	} else {
+		synthesizer = &voice.NoopSynthesizer{}
+		slog.Info("VOICE_TTS not set — text-only responses on all channels")
+	}
+
 	// Start Discord channel if configured.
 	var discordHandler *discord.Handler
 	if cfg.DiscordConfigured() {
@@ -196,6 +206,7 @@ func main() {
 			slog.Error("whatsapp: setup failed", "error", err)
 			os.Exit(1)
 		}
+		whatsAppHandler.SetSynthesizer(synthesizer)
 		reminderWorker.AddNotifier(whatsAppHandler)
 		go func() {
 			if err := whatsAppHandler.Start(ctx); err != nil {
@@ -215,6 +226,7 @@ func main() {
 			os.Exit(1)
 		}
 		telegramHandler.SetTranscriber(transcriber)
+		telegramHandler.SetSynthesizer(synthesizer)
 		reminderWorker.AddNotifier(telegramHandler)
 		go func() {
 			if err := telegramHandler.Start(ctx); err != nil {
