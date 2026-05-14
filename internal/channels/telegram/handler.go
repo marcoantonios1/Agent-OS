@@ -44,18 +44,23 @@ type BotAPI interface {
 // Handler listens for Telegram updates and routes them through the shared
 // Dispatcher (router.Router). One Handler per bot token.
 type Handler struct {
-	bot        BotAPI
-	username   string // bot's own username, set by New() from Self.UserName
-	dispatcher web.Dispatcher
-	allowedUID int64  // silently drop messages from any other user ID
+	bot         BotAPI
+	username    string // bot's own username, set by New() from Self.UserName
+	dispatcher  web.Dispatcher
+	allowedUID  int64 // silently drop messages from any other user ID
 	transcriber voice.Transcriber
-	log        *slog.Logger
-	httpClient *http.Client
+	synthesizer voice.Synthesizer
+	log         *slog.Logger
+	httpClient  *http.Client
 }
 
 // SetTranscriber replaces the handler's transcriber. Call after New() to enable
 // voice-to-text; omitting it leaves the NoopTranscriber default in place.
 func (h *Handler) SetTranscriber(t voice.Transcriber) { h.transcriber = t }
+
+// SetSynthesizer replaces the handler's synthesizer. When set and the inbound
+// message was a voice message, the agent response is synthesized back to audio.
+func (h *Handler) SetSynthesizer(s voice.Synthesizer) { h.synthesizer = s }
 
 // New creates a Handler and validates the bot token by calling GetMe.
 // Returns an error if the token is invalid or the Telegram API is unreachable.
@@ -70,6 +75,7 @@ func New(dispatcher web.Dispatcher, token string, allowedUID int64) (*Handler, e
 		dispatcher:  dispatcher,
 		allowedUID:  allowedUID,
 		transcriber: &voice.NoopTranscriber{},
+		synthesizer: &voice.NoopSynthesizer{},
 		log:         slog.Default(),
 		httpClient:  http.DefaultClient,
 	}, nil
@@ -84,6 +90,7 @@ func NewForTest(dispatcher web.Dispatcher, bot BotAPI, allowedUID int64) *Handle
 		dispatcher:  dispatcher,
 		allowedUID:  allowedUID,
 		transcriber: &voice.NoopTranscriber{},
+		synthesizer: &voice.NoopSynthesizer{},
 		log:         slog.Default(),
 		httpClient:  http.DefaultClient,
 	}
@@ -171,7 +178,7 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 			return
 		}
 		inbound := h.buildInbound(msg, sid, parts)
-		h.routeAndRespond(ctx, msg.Chat.ID, sid, inbound)
+		h.routeAndRespond(ctx, msg.Chat.ID, sid, inbound, false)
 
 	case msg.Document != nil:
 		doc := msg.Document
@@ -188,11 +195,11 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 			return
 		}
 		inbound := h.buildInbound(msg, sid, parts)
-		h.routeAndRespond(ctx, msg.Chat.ID, sid, inbound)
+		h.routeAndRespond(ctx, msg.Chat.ID, sid, inbound, false)
 
 	case msg.Text != "":
 		inbound := h.buildInbound(msg, sid, nil)
-		h.routeAndRespond(ctx, msg.Chat.ID, sid, inbound)
+		h.routeAndRespond(ctx, msg.Chat.ID, sid, inbound, false)
 
 	default:
 		h.sendText(msg.Chat.ID,
@@ -243,7 +250,7 @@ func (h *Handler) handleAudio(ctx context.Context, msg *tgbotapi.Message, sid, f
 		Text:      fmt.Sprintf("[Voice message transcribed]: %s", text),
 		Timestamp: time.Now(),
 	}
-	h.routeAndRespond(ctx, msg.Chat.ID, sid, inbound)
+	h.routeAndRespond(ctx, msg.Chat.ID, sid, inbound, true)
 }
 
 // buildInbound constructs a types.InboundMessage from a Telegram message.

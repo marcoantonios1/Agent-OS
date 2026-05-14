@@ -598,3 +598,112 @@ func TestVoice_NonWhitelistedSender_Dropped(t *testing.T) {
 		t.Error("non-whitelisted sender should be silently dropped")
 	}
 }
+
+// ── TTS tests ─────────────────────────────────────────────────────────────────
+
+// stubSynthesizer is a controllable voice.Synthesizer.
+type stubSynthesizer struct {
+	data    []byte
+	mime    string
+	err     error
+}
+
+func (s *stubSynthesizer) Synthesize(_ context.Context, _ string) ([]byte, string, error) {
+	return s.data, s.mime, s.err
+}
+
+func TestTTS_VoiceInput_AudioSent(t *testing.T) {
+	audioResponse := []byte("synthesized mp3")
+	dl := &stubDownloader{data: []byte("fake ogg")}
+	sender := &stubSender{}
+	tr := &stubTranscriber{text: "transcribed text"}
+	synth := &stubSynthesizer{data: audioResponse, mime: "audio/mpeg"}
+	disp := &recordingDispatcher{}
+
+	h := newVoiceHandler(dl, sender, tr, synth, disp)
+	h.onMessage(makeAudioEvent("96170123456", "audio/ogg"))
+
+	if len(sender.sentAudio) != 1 {
+		t.Fatalf("expected 1 uploaded audio, got %d", len(sender.sentAudio))
+	}
+	if string(sender.sentAudio[0]) != string(audioResponse) {
+		t.Errorf("uploaded audio mismatch")
+	}
+	// Text send should not be called — audio was sent instead.
+	if len(sender.sent) != 0 {
+		t.Errorf("text send should not be called when TTS succeeds, got %v", sender.sent)
+	}
+}
+
+func TestTTS_VoiceInput_SynthesisFails_FallsBackToText(t *testing.T) {
+	dl := &stubDownloader{data: []byte("fake ogg")}
+	sender := &stubSender{}
+	tr := &stubTranscriber{text: "transcribed text"}
+	synth := &stubSynthesizer{err: errors.New("tts unavailable")}
+	disp := &recordingDispatcher{}
+
+	h := newVoiceHandler(dl, sender, tr, synth, disp)
+	h.onMessage(makeAudioEvent("96170123456", "audio/ogg"))
+
+	if len(sender.sentAudio) != 0 {
+		t.Errorf("no audio should be uploaded on synthesis error, got %d", len(sender.sentAudio))
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("expected 1 text fallback reply, got %d", len(sender.sent))
+	}
+}
+
+func TestTTS_VoiceInput_NoopSynthesizer_SendsText(t *testing.T) {
+	dl := &stubDownloader{data: []byte("fake ogg")}
+	sender := &stubSender{}
+	tr := &stubTranscriber{text: "transcribed text"}
+	disp := &recordingDispatcher{}
+
+	h := newVoiceHandler(dl, sender, tr, &voice.NoopSynthesizer{}, disp)
+	h.onMessage(makeAudioEvent("96170123456", "audio/ogg"))
+
+	if len(sender.sentAudio) != 0 {
+		t.Errorf("noop synthesizer should not upload audio, got %d", len(sender.sentAudio))
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("expected 1 text reply, got %d", len(sender.sent))
+	}
+}
+
+func TestTTS_TextInput_NeverSynthesized(t *testing.T) {
+	// Even with TTS configured, a text message must get a text response.
+	audioResponse := []byte("synthesized mp3")
+	sender := &stubSender{}
+	synth := &stubSynthesizer{data: audioResponse, mime: "audio/mpeg"}
+	disp := &recordingDispatcher{}
+	h := &Handler{
+		downloader:  &stubDownloader{},
+		sender:      sender,
+		dispatcher:  disp,
+		allowedJID:  "96170123456@s.whatsapp.net",
+		transcriber: &voice.NoopTranscriber{},
+		synthesizer: synth,
+		log:         slog.Default(),
+	}
+
+	// Construct a plain text WhatsApp event.
+	jid := watypes.JID{User: "96170123456", Server: watypes.DefaultUserServer}
+	evt := &events.Message{
+		Info: watypes.MessageInfo{
+			MessageSource: watypes.MessageSource{
+				Chat:     jid,
+				Sender:   jid,
+				IsFromMe: false,
+			},
+		},
+		Message: &waE2E.Message{Conversation: strPtr("Hello!")},
+	}
+	h.onMessage(evt)
+
+	if len(sender.sentAudio) != 0 {
+		t.Errorf("text input should never trigger TTS, got %d audio uploads", len(sender.sentAudio))
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("expected 1 text reply, got %d", len(sender.sent))
+	}
+}
