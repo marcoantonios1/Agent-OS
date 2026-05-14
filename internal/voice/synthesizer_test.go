@@ -3,7 +3,6 @@ package voice_test
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -148,8 +147,11 @@ func TestCostguardSynthesizer_ContentTypeStripsParams(t *testing.T) {
 
 func TestCostguardSynthesizer_MissingContentType_DefaultsToMPEG(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// No Content-Type set — should default to audio/mpeg.
-		io.WriteString(w, "audio") //nolint:errcheck
+		// Explicitly clear Content-Type before writing so the synthesizer
+		// uses its own default. WriteHeader prevents auto-sniffing.
+		w.Header()["Content-Type"] = nil
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("audio bytes")) //nolint:errcheck
 	}))
 	defer srv.Close()
 
