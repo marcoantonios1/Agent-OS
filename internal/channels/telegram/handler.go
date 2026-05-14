@@ -62,6 +62,10 @@ func (h *Handler) SetTranscriber(t voice.Transcriber) { h.transcriber = t }
 // message was a voice message, the agent response is synthesized back to audio.
 func (h *Handler) SetSynthesizer(s voice.Synthesizer) { h.synthesizer = s }
 
+// SetHTTPClient replaces the handler's HTTP client. Used in tests to intercept
+// audio download requests without hitting real Telegram servers.
+func (h *Handler) SetHTTPClient(c *http.Client) { h.httpClient = c }
+
 // New creates a Handler and validates the bot token by calling GetMe.
 // Returns an error if the token is invalid or the Telegram API is unreachable.
 func New(dispatcher web.Dispatcher, token string, allowedUID int64) (*Handler, error) {
