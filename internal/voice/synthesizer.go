@@ -20,34 +20,41 @@ type Synthesizer interface {
 // CostguardSynthesizer posts text to a Costguard /v1/audio/speech endpoint
 // (OpenAI TTS API compatible) and returns the raw audio bytes.
 type CostguardSynthesizer struct {
-	baseURL string
-	apiKey  string
-	voice   string
-	client  *http.Client
+	baseURL        string
+	apiKey         string
+	voice          string
+	responseFormat string // e.g. "opus", "mp3" — "opus" produces OGG/Opus for mobile
+	client         *http.Client
 }
 
 // NewCostguardSynthesizer returns a Synthesizer backed by the Costguard gateway.
 // voice is the voice name (e.g. "alloy", "nova", "shimmer"); defaults to "alloy"
-// when empty.
-func NewCostguardSynthesizer(baseURL, apiKey, voice string) *CostguardSynthesizer {
+// when empty. responseFormat defaults to "opus" (OGG/Opus container), which is
+// required for WhatsApp mobile and Telegram voice notes — MP3 only plays on desktop.
+func NewCostguardSynthesizer(baseURL, apiKey, voice, responseFormat string) *CostguardSynthesizer {
 	if voice == "" {
 		voice = "alloy"
 	}
+	if responseFormat == "" {
+		responseFormat = "opus"
+	}
 	return &CostguardSynthesizer{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		apiKey:  apiKey,
-		voice:   voice,
-		client:  http.DefaultClient,
+		baseURL:        strings.TrimRight(baseURL, "/"),
+		apiKey:         apiKey,
+		voice:          voice,
+		responseFormat: responseFormat,
+		client:         http.DefaultClient,
 	}
 }
 
 // Synthesize sends text to the TTS endpoint and returns the audio bytes with the
-// MIME type reported by the server (typically "audio/mpeg").
+// MIME type reported by the server (typically "audio/ogg" for opus format).
 func (s *CostguardSynthesizer) Synthesize(ctx context.Context, text string) ([]byte, string, error) {
 	body, err := json.Marshal(map[string]string{
-		"model": "tts-1",
-		"input": text,
-		"voice": s.voice,
+		"model":           "tts-1",
+		"input":           text,
+		"voice":           s.voice,
+		"response_format": s.responseFormat,
 	})
 	if err != nil {
 		return nil, "", fmt.Errorf("tts: marshal request: %w", err)
@@ -78,7 +85,8 @@ func (s *CostguardSynthesizer) Synthesize(ctx context.Context, text string) ([]b
 
 	mimeType := resp.Header.Get("Content-Type")
 	if mimeType == "" {
-		mimeType = "audio/mpeg"
+		// Default to OGG since "opus" is the default response_format.
+		mimeType = "audio/ogg"
 	}
 	// Strip parameters ("audio/mpeg; charset=utf-8" → "audio/mpeg").
 	if idx := strings.IndexByte(mimeType, ';'); idx >= 0 {

@@ -176,7 +176,7 @@ func main() {
 	// Build synthesizer — enabled only when VOICE_TTS=enabled.
 	var synthesizer voice.Synthesizer
 	if cfg.VoiceTTSEnabled() {
-		synthesizer = voice.NewCostguardSynthesizer(cfg.CostguardURL, cfg.CostguardAPIKey, cfg.VoiceTTSVoice)
+		synthesizer = voice.NewCostguardSynthesizer(cfg.CostguardURL, cfg.CostguardAPIKey, cfg.VoiceTTSVoice, cfg.VoiceTTSFormat)
 		slog.Info("voice TTS enabled", "voice", cfg.VoiceTTSVoice)
 	} else {
 		synthesizer = &voice.NoopSynthesizer{}

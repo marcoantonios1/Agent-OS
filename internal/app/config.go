@@ -131,6 +131,12 @@ type Config struct {
 	// Env: VOICE_TTS_VOICE (default: "alloy")
 	VoiceTTSVoice string
 
+	// VoiceTTSFormat is the audio format requested from the TTS endpoint.
+	// "opus" (default) produces OGG/Opus required by WhatsApp and Telegram mobile.
+	// "mp3" can be used if the endpoint does not support opus.
+	// Env: VOICE_TTS_FORMAT (default: "opus")
+	VoiceTTSFormat string
+
 	// ── Telegram channel ─────────────────────────────────────────────────────
 
 	// TelegramBotToken is the bot token obtained from @BotFather.
@@ -237,6 +243,7 @@ func Load(envFile string) (*Config, error) {
 		VoiceTranscription: os.Getenv("VOICE_TRANSCRIPTION"),
 		VoiceTTS:           os.Getenv("VOICE_TTS"),
 		VoiceTTSVoice:      envOr("VOICE_TTS_VOICE", "alloy"),
+		VoiceTTSFormat:     envOr("VOICE_TTS_FORMAT", "opus"),
 
 		TelegramBotToken:      os.Getenv("TELEGRAM_BOT_TOKEN"),
 		TelegramAllowedUserID: envInt64("TELEGRAM_ALLOWED_USER_ID", 0),
