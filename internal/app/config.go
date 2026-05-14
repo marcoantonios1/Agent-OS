@@ -114,6 +114,14 @@ type Config struct {
 	// Env: SESSION_TTL (default: 24h). Accepts any value parseable by time.ParseDuration.
 	SessionTTL time.Duration
 
+	// ── Voice transcription ───────────────────────────────────────────────────
+
+	// VoiceTranscription enables voice-to-text on all channel handlers that
+	// support audio messages. Set to "enabled" to activate; any other value
+	// (including unset) leaves voice disabled.
+	// Env: VOICE_TRANSCRIPTION (default: "" — disabled)
+	VoiceTranscription string
+
 	// ── Telegram channel ─────────────────────────────────────────────────────
 
 	// TelegramBotToken is the bot token obtained from @BotFather.
@@ -217,6 +225,8 @@ func Load(envFile string) (*Config, error) {
 		BuilderSandboxDir: envOr("BUILDER_SANDBOX_DIR", "workspace"),
 		SessionTTL:        envDuration("SESSION_TTL", 24*time.Hour),
 
+		VoiceTranscription: os.Getenv("VOICE_TRANSCRIPTION"),
+
 		TelegramBotToken:      os.Getenv("TELEGRAM_BOT_TOKEN"),
 		TelegramAllowedUserID: envInt64("TELEGRAM_ALLOWED_USER_ID", 0),
 
@@ -267,6 +277,11 @@ func (c *Config) SQLiteConfigured() bool {
 // DiscordConfigured reports whether a Discord bot token is present.
 func (c *Config) DiscordConfigured() bool {
 	return c.DiscordBotToken != ""
+}
+
+// VoiceTranscriptionEnabled reports whether VOICE_TRANSCRIPTION=enabled.
+func (c *Config) VoiceTranscriptionEnabled() bool {
+	return c.VoiceTranscription == "enabled"
 }
 
 // TelegramConfigured reports whether a Telegram bot token is present.
