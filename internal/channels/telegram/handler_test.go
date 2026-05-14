@@ -224,6 +224,17 @@ func (s *stubTranscriber) Transcribe(_ context.Context, _ []byte, _ string) (str
 	return s.text, s.err
 }
 
+// stubSynthesizer is a controllable voice.Synthesizer.
+type stubSynthesizer struct {
+	data []byte
+	mime string
+	err  error
+}
+
+func (s *stubSynthesizer) Synthesize(_ context.Context, _ string) ([]byte, string, error) {
+	return s.data, s.mime, s.err
+}
+
 // recordingDispatcher satisfies web.Dispatcher and records every routed message.
 type recordingDispatcher struct {
 	mu       sync.Mutex
@@ -265,18 +276,18 @@ func audioMessage(userID, chatID int64, fileID, mimeType string) *tgbotapi.Messa
 	}
 }
 
-// newVoiceHandler builds a Handler wired for voice/audio tests.
-func newVoiceHandler(bot *mockBot, tr voice.Transcriber, disp *recordingDispatcher, srv *httptest.Server) *Handler {
-	h := &Handler{
+// newVoiceHandler builds a Handler wired for voice/audio/TTS tests.
+func newVoiceHandler(bot *mockBot, tr voice.Transcriber, synth voice.Synthesizer, disp *recordingDispatcher, srv *httptest.Server) *Handler {
+	return &Handler{
 		bot:         bot,
 		username:    "testbot",
 		dispatcher:  disp,
 		allowedUID:  111,
 		transcriber: tr,
+		synthesizer: synth,
 		log:         slog.Default(),
 		httpClient:  srv.Client(),
 	}
-	return h
 }
 
 // ── voice tests ───────────────────────────────────────────────────────────────
