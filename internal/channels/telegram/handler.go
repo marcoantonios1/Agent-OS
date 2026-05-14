@@ -151,42 +151,14 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		if msg.Voice.MimeType != "" {
 			mimeType = msg.Voice.MimeType
 		}
-		url, err := h.bot.GetFileDirectURL(msg.Voice.FileID)
-		if err != nil {
-			h.log.WarnContext(ctx, "telegram: failed to get voice URL",
-				"session_id", sid, "error", err)
-			h.sendText(msg.Chat.ID, "Sorry, I couldn't access that voice message.")
-			return
+		h.handleAudio(ctx, msg, sid, msg.Voice.FileID, mimeType)
+
+	case msg.Audio != nil:
+		mimeType := "audio/mpeg"
+		if msg.Audio.MimeType != "" {
+			mimeType = msg.Audio.MimeType
 		}
-		audioBytes, err := h.fetchRaw(ctx, url)
-		if err != nil {
-			h.log.WarnContext(ctx, "telegram: failed to download voice",
-				"session_id", sid, "error", err)
-			h.sendText(msg.Chat.ID, "Sorry, I couldn't download that voice message.")
-			return
-		}
-		text, transcribeErr := h.transcriber.Transcribe(ctx, audioBytes, mimeType)
-		if errors.Is(transcribeErr, voice.ErrNotSupported) {
-			h.sendText(msg.Chat.ID,
-				"Voice messages aren't supported yet — please type your message.")
-			return
-		}
-		if transcribeErr != nil {
-			h.log.WarnContext(ctx, "telegram: transcription failed",
-				"session_id", sid, "error", transcribeErr)
-			h.sendText(msg.Chat.ID,
-				"Sorry, I couldn't transcribe that voice message — please type your message.")
-			return
-		}
-		inbound := types.InboundMessage{
-			ID:        strconv.Itoa(msg.MessageID),
-			ChannelID: types.ChannelID("telegram"),
-			UserID:    strconv.FormatInt(msg.From.ID, 10),
-			SessionID: sid,
-			Text:      text,
-			Timestamp: time.Now(),
-		}
-		h.routeAndRespond(ctx, msg.Chat.ID, sid, inbound)
+		h.handleAudio(ctx, msg, sid, msg.Audio.FileID, mimeType)
 
 	case msg.Photo != nil:
 		// Telegram provides multiple photo sizes; the last one is the largest.
@@ -226,6 +198,52 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		h.sendText(msg.Chat.ID,
 			"I can handle text, photos, and PDF documents. Other message types aren't supported yet.")
 	}
+}
+
+// handleAudio downloads a Telegram audio file, transcribes it, and routes the
+// result. Used for both Voice messages (OGG) and Audio file uploads.
+func (h *Handler) handleAudio(ctx context.Context, msg *tgbotapi.Message, sid, fileID, mimeType string) {
+	h.log.InfoContext(ctx, "telegram: audio message received",
+		"session_id", sid, "mime", mimeType)
+
+	url, err := h.bot.GetFileDirectURL(fileID)
+	if err != nil {
+		h.log.WarnContext(ctx, "telegram: failed to get audio URL",
+			"session_id", sid, "error", err)
+		h.sendText(msg.Chat.ID, "Sorry, I couldn't access that voice message.")
+		return
+	}
+	audioBytes, err := h.fetchRaw(ctx, url)
+	if err != nil {
+		h.log.WarnContext(ctx, "telegram: failed to download audio",
+			"session_id", sid, "error", err)
+		h.sendText(msg.Chat.ID, "Sorry, I couldn't download that voice message.")
+		return
+	}
+	text, transcribeErr := h.transcriber.Transcribe(ctx, audioBytes, mimeType)
+	if errors.Is(transcribeErr, voice.ErrNotSupported) {
+		h.log.InfoContext(ctx, "telegram: voice transcription disabled (VOICE_TRANSCRIPTION not set to 'enabled')",
+			"session_id", sid)
+		h.sendText(msg.Chat.ID,
+			"Voice messages aren't supported yet — please type your message.")
+		return
+	}
+	if transcribeErr != nil {
+		h.log.WarnContext(ctx, "telegram: transcription failed",
+			"session_id", sid, "error", transcribeErr)
+		h.sendText(msg.Chat.ID,
+			"Sorry, I couldn't transcribe that voice message — please type your message.")
+		return
+	}
+	inbound := types.InboundMessage{
+		ID:        strconv.Itoa(msg.MessageID),
+		ChannelID: types.ChannelID("telegram"),
+		UserID:    strconv.FormatInt(msg.From.ID, 10),
+		SessionID: sid,
+		Text:      fmt.Sprintf("[Voice message transcribed]: %s", text),
+		Timestamp: time.Now(),
+	}
+	h.routeAndRespond(ctx, msg.Chat.ID, sid, inbound)
 }
 
 // buildInbound constructs a types.InboundMessage from a Telegram message.
