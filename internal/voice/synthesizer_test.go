@@ -20,7 +20,7 @@ func TestCostguardSynthesizer_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := voice.NewCostguardSynthesizer(srv.URL, "", "alloy", "", "")
+	s := voice.NewCostguardSynthesizer(srv.URL, "", "alloy", "")
 	got, mime, err := s.Synthesize(context.Background(), "hello world")
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
@@ -52,7 +52,7 @@ func TestCostguardSynthesizer_VoiceParam(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := voice.NewCostguardSynthesizer(srv.URL, "", "nova", "", "")
+	s := voice.NewCostguardSynthesizer(srv.URL, "", "nova", "")
 	if _, _, err := s.Synthesize(context.Background(), "test input"); err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestCostguardSynthesizer_BearerTokenForwarded(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := voice.NewCostguardSynthesizer(srv.URL, "secret", "alloy", "", "")
+	s := voice.NewCostguardSynthesizer(srv.URL, "secret", "alloy", "")
 	if _, _, err := s.Synthesize(context.Background(), "hi"); err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestCostguardSynthesizer_NonOKStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := voice.NewCostguardSynthesizer(srv.URL, "", "alloy", "", "")
+	s := voice.NewCostguardSynthesizer(srv.URL, "", "alloy", "")
 	_, _, err := s.Synthesize(context.Background(), "hi")
 	if err == nil {
 		t.Fatal("Synthesize should return error on non-200 status")
@@ -118,7 +118,7 @@ func TestCostguardSynthesizer_TrailingSlashStripped(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := voice.NewCostguardSynthesizer(srv.URL+"/", "", "alloy", "", "")
+	s := voice.NewCostguardSynthesizer(srv.URL+"/", "", "alloy", "")
 	if _, _, err := s.Synthesize(context.Background(), "hi"); err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestCostguardSynthesizer_ContentTypeStripsParams(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := voice.NewCostguardSynthesizer(srv.URL, "", "alloy", "", "")
+	s := voice.NewCostguardSynthesizer(srv.URL, "", "alloy", "")
 	_, mime, err := s.Synthesize(context.Background(), "hi")
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
@@ -155,7 +155,7 @@ func TestCostguardSynthesizer_MissingContentType_DefaultsToMPEG(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := voice.NewCostguardSynthesizer(srv.URL, "", "alloy", "", "")
+	s := voice.NewCostguardSynthesizer(srv.URL, "", "alloy", "")
 	_, mime, err := s.Synthesize(context.Background(), "hi")
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
