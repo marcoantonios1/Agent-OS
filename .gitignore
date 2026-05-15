@@ -9,3 +9,6 @@ vendor/
 /data
 /agents
 HEARTBEAT.md
+
+# Community skills — user-created sub-packages are local only; register.go is tracked.
+skills/community/*/

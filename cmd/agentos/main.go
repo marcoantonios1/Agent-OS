@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/marcoantonios1/Agent-OS/internal/agents/builder"
+	"github.com/marcoantonios1/Agent-OS/skills/community"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/generic"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/profile"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/reviewer"
@@ -103,6 +104,7 @@ func main() {
 		store,
 		builderCfg,
 	)
+	community.RegisterAll(globalRegistry)
 
 	builderReg, _ := globalRegistry.Subset([]string{
 		"file_read", "file_write", "file_list", "shell_run",
