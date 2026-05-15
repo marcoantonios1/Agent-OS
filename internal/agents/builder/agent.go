@@ -189,10 +189,11 @@ If the user is satisfied and wants to mark the project done:
 // Agent implements the Builder Agent. It carries multi-turn state in both
 // session metadata (fast cache) and a ProjectStore (persistent source of truth).
 type Agent struct {
-	loop     *tools.AgenticLoop
-	sessions sessions.SessionStore
-	projects sessions.ProjectStore
-	model    string
+	loop          *tools.AgenticLoop
+	sessions      sessions.SessionStore
+	projects      sessions.ProjectStore
+	model         string
+	toolCallModel string // optional cheap model for tool-call steps
 }
 
 // New constructs a Builder Agent.
