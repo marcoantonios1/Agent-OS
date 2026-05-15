@@ -216,6 +216,11 @@ func New(llm costguard.LLMClient, reg *tools.ToolRegistry, store sessions.Sessio
 	}
 }
 
+// SetToolCallModel sets the cheap model used for intermediate tool-call steps.
+// When set, the agentic loop uses this model for file/shell/search decisions and
+// reserves the primary model for final synthesis. Call after New().
+func (a *Agent) SetToolCallModel(model string) { a.toolCallModel = model }
+
 // SetSubAgentCaller registers the research_query tool into the agent's registry.
 // It must be called after New() and before the first Handle() invocation.
 // It is a no-op when caller is nil, so callers without a wired sub-agent get
@@ -357,9 +362,10 @@ func (a *Agent) Handle(ctx context.Context, req types.AgentRequest) (types.Agent
 	msgs = append(msgs, req.History...)
 
 	raw, err := a.loop.Run(ctx, costguard.CompletionRequest{
-		Model:     a.model,
-		Messages:  msgs,
-		MaxTokens: 8192,
+		Model:         a.model,
+		ToolCallModel: a.toolCallModel,
+		Messages:      msgs,
+		MaxTokens:     8192,
 	})
 	if err != nil {
 		return types.AgentResponse{}, fmt.Errorf("builder agent: %w", err)
@@ -587,9 +593,10 @@ func (a *Agent) runAutonomous(
 		msgs = append(msgs, types.ConversationTurn{Role: "user", Content: userMsg})
 
 		raw, err := a.loop.Run(ctx, costguard.CompletionRequest{
-			Model:     a.model,
-			Messages:  msgs,
-			MaxTokens: 8192,
+			Model:         a.model,
+			ToolCallModel: a.toolCallModel,
+			Messages:      msgs,
+			MaxTokens:     8192,
 		})
 		if err != nil {
 			return types.AgentResponse{}, fmt.Errorf("builder autonomous iter %d: %w", iter, err)

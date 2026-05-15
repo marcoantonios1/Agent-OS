@@ -57,6 +57,10 @@ type Config struct {
 	ResearchModel   string
 	ClassifierModel string
 	ProfileModel    string
+	// BuilderToolCallModel is the cheap model used for tool-call steps in the Builder Agent.
+	// When empty, BuilderModel is used for all steps.
+	// Env: BUILDER_TOOL_CALL_MODEL (default: "" — disabled)
+	BuilderToolCallModel string
 
 	// ── Google (Gmail + Calendar) ─────────────────────────────────────────────
 
