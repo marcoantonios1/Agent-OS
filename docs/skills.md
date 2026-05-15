@@ -1,4 +1,4 @@
-# Built-in skills
+# Skills reference
 
 Skills are tools the model can call during its agentic loop.  Each skill maps
 to a registered Go function in the tool registry.  An agent only has access to
@@ -13,6 +13,20 @@ skills:
   - web_fetch
   - reminder_set
 ```
+
+---
+
+## Table of contents
+
+- [Web](#web) — `web_search`, `web_fetch`
+- [Email](#email) — `email_list`, `email_read`, `email_search`, `email_draft`, `email_send`
+- [Calendar](#calendar) — `calendar_list`, `calendar_read`, `calendar_create`, `calendar_update`
+- [Reminders](#reminders) — `reminder_set`, `reminder_list`, `reminder_cancel`
+- [User profile](#user-profile) — `user_profile_read`, `user_profile_update`
+- [File system](#file-system-builder-sandbox) — `file_read`, `file_write`, `file_list`, `shell_run`
+- [Project management](#project-management) — `project_list`, `project_load`
+- [Skill availability by agent](#skill-availability-by-built-in-agent)
+- [Community skills](#community-skills)
 
 ---
 
@@ -249,3 +263,41 @@ Load an existing project into the current session so the agent can resume work.
 
 User-defined agents may combine any subset of these skills regardless of the
 built-in defaults.
+
+---
+
+## Community skills
+
+Community skills extend the built-in registry without touching core code.  They live in `skills/community/` and are registered in `skills/community/register.go`.
+
+### Ready-to-use examples
+
+Three example skills ship in `skills/community/examples/`.  Copy any of them into `skills/community/` to activate:
+
+| Skill name | Description | Credentials |
+|---|---|---|
+| `weather` | Current temperature, conditions, humidity, and wind for any city | None — uses Open-Meteo (free) |
+| `stock_price` | Current price and daily change for a stock ticker (e.g. `AAPL`) | `ALPHA_VANTAGE_KEY` env var — [free tier](https://www.alphavantage.co/support/#api-key) |
+| `url_shorten` | Shorten a long URL via is.gd | None — free, no key |
+
+Quick-start for the no-key `weather` example:
+
+```bash
+cp -r skills/community/examples/weather skills/community/weather
+```
+
+Then in `skills/community/register.go`:
+
+```go
+import "github.com/marcoantonios1/Agent-OS/skills/community/weather"
+
+func RegisterAll(reg *tools.ToolRegistry) {
+    reg.Register(weather.New())
+}
+```
+
+Add `weather` to the agent's `agent.yaml` skills list and restart.
+
+### Writing your own skill
+
+See [docs/contributing-skills.md](contributing-skills.md) for a full walkthrough: interface definition, registration, nil-safe API-key constructors, and testing patterns.
