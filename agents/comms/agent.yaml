@@ -1,5 +1,5 @@
 id: comms
-model: claude-sonnet-4-6   # final synthesis
+model: gemma4:26b   # final synthesis
 tool_call_model: gemma4:26b # email / calendar / reminder tool steps
 max_tokens: 4096
 intents:

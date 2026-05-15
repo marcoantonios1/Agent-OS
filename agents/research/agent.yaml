@@ -1,5 +1,5 @@
 id: research
-model: claude-sonnet-4-6   # final synthesis — full model for quality answers
+model: gemma4:26b   # final synthesis — full model for quality answers
 tool_call_model: gemma4:26b # web_search / web_fetch steps — 3-5x cheaper local model
 max_tokens: 4096
 intents:
