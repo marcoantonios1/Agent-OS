@@ -54,7 +54,7 @@ Optional. When set, the agentic loop uses this model for every intermediate tool
 
 ```yaml
 model: claude-sonnet-4-6    # final answer — full reasoning quality
-tool_call_model: gemma4:27b # tool steps — fast, cheap, local
+tool_call_model: gemma4:26b # tool steps — fast, cheap, local
 ```
 
 Tool-call steps are typically 3–5x cheaper with a local model and synthesis quality is unchanged, because the expensive model still sees the complete tool results when it writes the final response.
@@ -293,7 +293,7 @@ agents/finance/SYSTEM.md
 ```yaml
 id: finance
 model: claude-sonnet-4-6    # final synthesis — full model for quality answers
-tool_call_model: gemma4:27b # web_search / email_search / email_read steps — 3-5x cheaper
+tool_call_model: gemma4:26b # web_search / email_search / email_read steps — 3-5x cheaper
 max_tokens: 4096
 intents:
   - finance

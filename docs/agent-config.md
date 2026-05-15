@@ -61,7 +61,7 @@ max_tokens: 4096
 
 # Cheaper model used only for tool-call selection steps (Phase 5 optimisation).
 # When omitted, `model` is used for all steps.
-tool_call_model: gemma4:27b
+tool_call_model: gemma4:26b
 
 
 # ── Intent routing ─────────────────────────────────────────────────────────────
@@ -204,7 +204,7 @@ Sub-agent calls are depth-limited to **1** (no transitive chains).
 
 ```yaml
 id: companion
-model: gemma4:27b
+model: gemma4:26b
 max_tokens: 2048
 
 intents:

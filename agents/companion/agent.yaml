@@ -1,6 +1,6 @@
 id: companion
 model: claude-sonnet-4-6
-tool_call_model: gemma4:27b
+tool_call_model: gemma4:26b
 max_tokens: 4096
 intents:
   - companion
