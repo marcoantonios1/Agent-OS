@@ -1,5 +1,6 @@
 id: research
-model: gemma4:26b
+model: gemma4:26b   # final synthesis — full model for quality answers
+tool_call_model: gemma4:26b # web_search / web_fetch steps — 3-5x cheaper local model
 max_tokens: 4096
 intents:
   - research
