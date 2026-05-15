@@ -226,6 +226,7 @@ func Load(envFile string) (*Config, error) {
 		ResearchModel:   envOr("RESEARCH_MODEL", "gemma4:26b"),
 		ClassifierModel: envOr("CLASSIFIER_MODEL", "gemma4:26b"),
 		ProfileModel:    envOr("PROFILE_MODEL", "gemma4:26b"),
+		BuilderToolCallModel: os.Getenv("BUILDER_TOOL_CALL_MODEL"),
 
 		GoogleClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
 		GoogleClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),

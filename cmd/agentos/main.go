@@ -111,6 +111,10 @@ func main() {
 	reviewerReg, _ := globalRegistry.Subset([]string{"file_read", "file_list", "shell_run"})
 
 	builderAgent := builder.New(llm, builderReg, store, projectStore, cfg.BuilderModel)
+	if cfg.BuilderToolCallModel != "" {
+		builderAgent.SetToolCallModel(cfg.BuilderToolCallModel)
+		slog.Info("builder: tool-call model enabled", "tool_call_model", cfg.BuilderToolCallModel)
+	}
 
 	agents := map[router.Intent]router.Agent{
 		router.IntentBuilder:  builderAgent,
