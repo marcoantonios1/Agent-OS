@@ -1,5 +1,6 @@
 id: support
 model: gemma4:26b
+tool_call_model: gemma4:27b # web_search / web_fetch steps
 max_tokens: 2048
 intents:
   - support

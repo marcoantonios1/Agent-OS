@@ -1,5 +1,6 @@
 id: notes
 model: gemma4:26b
+tool_call_model: gemma4:27b # file_read / file_write / file_list steps
 max_tokens: 4096
 intents:
   - notes

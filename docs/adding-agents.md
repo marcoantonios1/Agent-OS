@@ -28,13 +28,14 @@ The folder name is only used for logging. The agent's public identity comes from
 ## Step 2 — Write `agent.yaml`
 
 ```yaml
-id: my-agent          # unique identifier, lowercase, hyphens ok
-model: gemma4:26b     # any model string Costguard accepts
-max_tokens: 4096      # optional, defaults to 4096
-intents:              # one or more routing keywords (see below)
+id: my-agent             # unique identifier, lowercase, hyphens ok
+model: gemma4:26b        # any model string Costguard accepts
+tool_call_model: ""      # optional — see below
+max_tokens: 4096         # optional, defaults to 4096
+intents:                 # one or more routing keywords (see below)
   - my-agent
   - my-keyword
-skills:               # subset of built-in skills the agent may use
+skills:                  # subset of built-in skills the agent may use
   - web_search
   - web_fetch
 ```
@@ -46,6 +47,21 @@ The router matches incoming messages to agents by intent. The classifier LLM ret
 - At least one intent must match a keyword the classifier knows about (see [Updating the classifier](#updating-the-classifier) below).
 - An agent can declare multiple intents — all of them point to the same agent instance.
 - Two agents must not declare the same intent; the last one loaded wins.
+
+### `tool_call_model`
+
+Optional. When set, the agentic loop uses this model for every intermediate tool-call decision step (reading files, searching the web, fetching URLs, querying email/calendar) and reserves `model` exclusively for the final synthesis step that the user actually reads.
+
+```yaml
+model: claude-sonnet-4-6    # final answer — full reasoning quality
+tool_call_model: gemma4:27b # tool steps — fast, cheap, local
+```
+
+Tool-call steps are typically 3–5x cheaper with a local model and synthesis quality is unchanged, because the expensive model still sees the complete tool results when it writes the final response.
+
+**When to use it:** any agent that makes more than one tool call per turn — web search, email lookup, file operations, calendar queries. Agents that rarely call tools (companion, doctor) gain little from this setting.
+
+**When to omit it:** leave `tool_call_model` out (or set it to the same value as `model`) to use a single model for every step. This is fine for simple agents or during development.
 
 ### `skills`
 
@@ -276,7 +292,8 @@ agents/finance/SYSTEM.md
 
 ```yaml
 id: finance
-model: gemma4:26b
+model: claude-sonnet-4-6    # final synthesis — full model for quality answers
+tool_call_model: gemma4:27b # web_search / email_search / email_read steps — 3-5x cheaper
 max_tokens: 4096
 intents:
   - finance
