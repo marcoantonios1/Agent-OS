@@ -158,6 +158,11 @@ Set `DISCORD_BOT_TOKEN` in `.env`. DMs are always routed; in server channels a c
 ### WhatsApp — [setup guide](docs/whatsapp-setup.md)
 Set `WHATSAPP_STORE_PATH` in `.env`. On first run a QR code prints to the logs — scan it with WhatsApp → Linked Devices. The session persists automatically.
 
+### Telegram — [setup guide](docs/telegram-setup.md)
+Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_USER_ID` in `.env`. The bot accepts messages only from the configured user ID (single-user whitelist). Supports text, images, PDFs, and voice messages.
+
+**Voice messages** — set `VOICE_TRANSCRIPTION=enabled` to enable speech-to-text (requires a Whisper-compatible endpoint). Set `VOICE_TTS=enabled` to synthesize replies back to audio.
+
 ---
 
 ## Heartbeat
@@ -334,6 +339,36 @@ docs/
 test/
   integration/            full HTTP stack tests with scripted LLM + mock providers
 ```
+
+---
+
+## What's built
+
+| Phase | Capability | Status |
+|---|---|---|
+| **1** | Web channel (POST /v1/chat + SSE streaming), intent router, session history (SQLite) | ✓ |
+| **1** | Comms agent — email list/read/search/draft/send, calendar list/read/create/update | ✓ |
+| **1** | Builder agent — requirements → spec → tasks → code → review (multi-phase) | ✓ |
+| **2** | Research agent — web search + page fetch via Brave | ✓ |
+| **2** | Research + Builder compound routing (multi-agent fan-out) | ✓ |
+| **2** | Cross-session user profile memory (persisted in SQLite) | ✓ |
+| **2** | Project resume across sessions via `project_load` | ✓ |
+| **3** | WhatsApp channel (whatsmeow, QR pairing, PTT voice notes) | ✓ |
+| **3** | Reminder worker — fire due reminders via any channel | ✓ |
+| **3** | Builder ↔ Research sub-agent delegation (`call_agent`) | ✓ |
+| **3** | Autonomous builder mode — runs all tasks, emits progress notifications | ✓ |
+| **3** | Multi-provider email (Gmail + Outlook merged inbox) | ✓ |
+| **4** | Folder-based generic agents (`agents/` directory, no Go code) | ✓ |
+| **4** | Personality observer — extracts signals from transcripts, injects into prompts | ✓ |
+| **4** | Heartbeat worker — scheduled briefings via Discord or WhatsApp | ✓ |
+| **4** | Context compaction — auto-summarises long sessions before dispatch | ✓ |
+| **4** | Image + PDF attachments over web channel | ✓ |
+| **5** | Telegram channel — text, images, PDFs, whitelist enforcement | ✓ |
+| **5** | Voice pipeline — Whisper transcription, TTS synthesis, PTT voice replies | ✓ |
+| **5** | `tool_call_model` — route tool-call steps to a cheap model, synthesis to full model | ✓ |
+| **5** | Community skills — drop-in `skills/community/` extension point | ✓ |
+| **5** | Example community skills: `weather`, `stock_price`, `url_shorten` | ✓ |
+| **5** | Skills reference doc (`docs/skills.md`) with TOC and community section | ✓ |
 
 ---
 
