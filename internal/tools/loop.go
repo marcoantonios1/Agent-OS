@@ -27,13 +27,20 @@ func (l *AgenticLoop) RunStream(ctx context.Context, req costguard.CompletionReq
 	for step := range maxSteps {
 		req.Messages = msgs
 
-		resp, err := l.Client.Complete(ctx, req)
+		// Use the cheap tool-call model for Complete() probe steps; the final
+		// synthesis is always streamed with req.Model below.
+		stepReq := req
+		if req.ToolCallModel != "" {
+			stepReq.Model = req.ToolCallModel
+		}
+
+		resp, err := l.Client.Complete(ctx, stepReq)
 		if err != nil {
 			return nil, fmt.Errorf("agentic loop stream step %d: LLM error: %w", step+1, err)
 		}
 
 		if len(resp.ToolCalls) == 0 {
-			// All tool work is done — stream the final reply.
+			// All tool work is done — stream the final reply with the full model.
 			slog.InfoContext(ctx, "agentic loop stream: dispatching final step", "tool_steps", step)
 			chunks, err := l.Client.Stream(ctx, req)
 			if err != nil {
@@ -42,7 +49,8 @@ func (l *AgenticLoop) RunStream(ctx context.Context, req costguard.CompletionReq
 			return streamChunksToStrings(ctx, chunks), nil
 		}
 
-		slog.InfoContext(ctx, "agentic loop stream tool calls", "step", step+1, "count", len(resp.ToolCalls))
+		slog.InfoContext(ctx, "agentic loop stream tool calls",
+			"step", step+1, "count", len(resp.ToolCalls), "model", stepReq.Model)
 		msgs = append(msgs, types.ConversationTurn{Role: "assistant", ToolCalls: resp.ToolCalls})
 		for _, tc := range resp.ToolCalls {
 			result, execErr := l.Registry.Execute(ctx, tc.Name, json.RawMessage(tc.Arguments))
@@ -122,6 +130,10 @@ type AgenticLoop struct {
 // registry are injected into every CompletionRequest automatically — callers
 // should not set req.Tools.
 //
+// When req.ToolCallModel is set, intermediate tool-call decision steps use that
+// model (typically a cheap local model). The final synthesis step always uses
+// req.Model. When ToolCallModel is empty, req.Model is used throughout.
+//
 // Returns the final text response from the LLM.
 func (l *AgenticLoop) Run(ctx context.Context, req costguard.CompletionRequest) (string, error) {
 	maxSteps := l.MaxSteps
@@ -138,19 +150,37 @@ func (l *AgenticLoop) Run(ctx context.Context, req costguard.CompletionRequest) 
 	for step := range maxSteps {
 		req.Messages = msgs
 
-		resp, err := l.Client.Complete(ctx, req)
+		// Use the cheap tool-call model for intermediate steps so the expensive
+		// model is reserved for final synthesis.
+		stepReq := req
+		if req.ToolCallModel != "" {
+			stepReq.Model = req.ToolCallModel
+		}
+
+		resp, err := l.Client.Complete(ctx, stepReq)
 		if err != nil {
 			return "", fmt.Errorf("agentic loop step %d: LLM error: %w", step+1, err)
 		}
 
 		// No tool calls → the model produced a final text response.
+		// Re-run with the full model when a separate tool-call model was used so
+		// that synthesis quality is not limited by the cheaper model.
 		if len(resp.ToolCalls) == 0 {
+			if req.ToolCallModel != "" && req.ToolCallModel != req.Model {
+				slog.InfoContext(ctx, "agentic loop: final synthesis with full model",
+					"steps", step+1, "model", req.Model)
+				resp, err = l.Client.Complete(ctx, req)
+				if err != nil {
+					return "", fmt.Errorf("agentic loop final step: LLM error: %w", err)
+				}
+			}
 			slog.InfoContext(ctx, "agentic loop complete", "steps", step+1)
 			return resp.Content, nil
 		}
 
 		slog.InfoContext(ctx, "agentic loop tool calls",
-			"step", step+1, "count", len(resp.ToolCalls))
+			"step", step+1, "count", len(resp.ToolCalls),
+			"model", stepReq.Model)
 
 		// Append assistant turn recording which tools were requested.
 		msgs = append(msgs, types.ConversationTurn{

@@ -57,6 +57,10 @@ type Config struct {
 	ResearchModel   string
 	ClassifierModel string
 	ProfileModel    string
+	// BuilderToolCallModel is the cheap model used for tool-call steps in the Builder Agent.
+	// When empty, BuilderModel is used for all steps.
+	// Env: BUILDER_TOOL_CALL_MODEL (default: "" — disabled)
+	BuilderToolCallModel string
 
 	// ── Google (Gmail + Calendar) ─────────────────────────────────────────────
 
@@ -222,6 +226,7 @@ func Load(envFile string) (*Config, error) {
 		ResearchModel:   envOr("RESEARCH_MODEL", "gemma4:26b"),
 		ClassifierModel: envOr("CLASSIFIER_MODEL", "gemma4:26b"),
 		ProfileModel:    envOr("PROFILE_MODEL", "gemma4:26b"),
+		BuilderToolCallModel: os.Getenv("BUILDER_TOOL_CALL_MODEL"),
 
 		GoogleClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
 		GoogleClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),

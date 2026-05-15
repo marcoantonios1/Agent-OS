@@ -21,7 +21,13 @@ type LLMClient interface {
 // CompletionRequest is the input to a single LLM call.
 type CompletionRequest struct {
 	// Model is the Costguard model identifier (e.g. "claude-sonnet-4-6").
+	// Used for the final synthesis step and as the fallback when ToolCallModel is empty.
 	Model string
+	// ToolCallModel is an optional cheaper model used for intermediate tool-call
+	// decision steps in the agentic loop. When empty, Model is used for all steps.
+	// Example: set to "gemma4:27b" to use a local model for file/shell/search calls
+	// while reserving the expensive model for the final text response.
+	ToolCallModel string
 	// Messages is the conversation history to send as context.
 	Messages []types.ConversationTurn
 	// Tools are optional tool definitions the model may invoke.

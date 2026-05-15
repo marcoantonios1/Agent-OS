@@ -23,10 +23,14 @@ import (
 type Config struct {
 	ID        string   `yaml:"id"`
 	Model     string   `yaml:"model"`
-	MaxTokens int      `yaml:"max_tokens"`
-	Intents   []string `yaml:"intents"`
-	Skills    []string `yaml:"skills"`
-	SubAgents []string `yaml:"sub_agents"`
+	// ToolCallModel is an optional cheaper model for intermediate tool-call steps.
+	// When set, the agentic loop uses this model for file/shell/search decisions and
+	// reserves Model for the final synthesis step. Omit to use Model throughout.
+	ToolCallModel string   `yaml:"tool_call_model"`
+	MaxTokens     int      `yaml:"max_tokens"`
+	Intents       []string `yaml:"intents"`
+	Skills        []string `yaml:"skills"`
+	SubAgents     []string `yaml:"sub_agents"`
 	// SystemPrompt is populated by the loader from SYSTEM.md, not agent.yaml.
 	SystemPrompt string `yaml:"-"`
 }
@@ -65,9 +69,10 @@ func (a *Agent) Handle(ctx context.Context, req types.AgentRequest) (types.Agent
 	msgs := a.buildMessages(req)
 
 	output, err := loop.Run(ctx, costguard.CompletionRequest{
-		Model:     a.cfg.Model,
-		Messages:  msgs,
-		MaxTokens: a.maxTokens(),
+		Model:         a.cfg.Model,
+		ToolCallModel: a.cfg.ToolCallModel,
+		Messages:      msgs,
+		MaxTokens:     a.maxTokens(),
 	})
 	if err != nil {
 		return types.AgentResponse{}, fmt.Errorf("generic agent %q: %w", a.cfg.ID, err)
@@ -84,9 +89,10 @@ func (a *Agent) HandleStream(ctx context.Context, req types.AgentRequest) (<-cha
 	msgs := a.buildMessages(req)
 
 	return loop.RunStream(ctx, costguard.CompletionRequest{
-		Model:     a.cfg.Model,
-		Messages:  msgs,
-		MaxTokens: a.maxTokens(),
+		Model:         a.cfg.Model,
+		ToolCallModel: a.cfg.ToolCallModel,
+		Messages:      msgs,
+		MaxTokens:     a.maxTokens(),
 	})
 }
 
