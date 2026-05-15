@@ -180,3 +180,73 @@ if t := weather.New(os.Getenv("WEATHER_API_KEY")); t != nil {
 **Parameter schema** — use `"required": []string{...}` to list mandatory parameters. The LLM will not call the tool without them.
 
 **Testing** — write a `_test.go` alongside `tool.go`. The `Execute` method accepts a `context.Context` so you can inject a `context.WithTimeout` in tests. Mock the HTTP client or external service rather than hitting real APIs in CI.
+
+---
+
+## Example skills
+
+Three ready-to-use example skills live in `skills/community/examples/`. Copy any of them into `skills/community/` to activate it.
+
+### weather — Open-Meteo (no API key)
+
+Geocodes the city name, fetches current temperature, humidity, wind speed, and conditions.
+
+```bash
+cp -r skills/community/examples/weather skills/community/weather
+```
+
+`register.go` addition:
+```go
+import "github.com/marcoantonios1/Agent-OS/skills/community/weather"
+
+reg.Register(weather.New())
+```
+
+Sample output: `Weather in London, GB: partly cloudy, 18.5°C, humidity 65%, wind 12.3 km/h`
+
+---
+
+### stock_price — Alpha Vantage (free API key required)
+
+Returns the current price and daily change for any ticker symbol.
+
+Get a free key at <https://www.alphavantage.co/support/#api-key> (25 requests/day on the free tier), then:
+
+```bash
+cp -r skills/community/examples/stock_price skills/community/stock_price
+```
+
+Set the key in your `.env`:
+```
+ALPHA_VANTAGE_KEY=your_key_here
+```
+
+`register.go` addition:
+```go
+import "github.com/marcoantonios1/Agent-OS/skills/community/stock_price"
+
+if t := stock_price.New(os.Getenv("ALPHA_VANTAGE_KEY")); t != nil {
+    reg.Register(t)
+}
+```
+
+Sample output: `AAPL: $189.42 (+2.13, +1.14% today)`
+
+---
+
+### url_shortener — is.gd (no API key)
+
+Shortens any URL using the is.gd free service.
+
+```bash
+cp -r skills/community/examples/url_shortener skills/community/url_shortener
+```
+
+`register.go` addition:
+```go
+import "github.com/marcoantonios1/Agent-OS/skills/community/url_shortener"
+
+reg.Register(url_shortener.New())
+```
+
+Sample output: `Shortened URL: https://is.gd/abc123`
