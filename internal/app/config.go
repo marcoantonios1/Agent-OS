@@ -153,6 +153,22 @@ type Config struct {
 	// Env: TELEGRAM_ALLOWED_USER_ID
 	TelegramAllowedUserID int64
 
+	// ── Slack channel ─────────────────────────────────────────────────────────
+
+	// SlackBotToken is the bot token (xoxb-...) for the Slack gateway.
+	// Setting this enables the Slack channel.
+	// Env: SLACK_BOT_TOKEN (required to enable Slack)
+	SlackBotToken string
+
+	// SlackAppToken is the app-level token (xapp-...) required for Socket Mode.
+	// Env: SLACK_APP_TOKEN (required when Slack is enabled)
+	SlackAppToken string
+
+	// SlackAllowedUserID is the Slack member ID that Agent OS will respond to.
+	// Required when SLACK_BOT_TOKEN is set.
+	// Env: SLACK_ALLOWED_USER_ID (e.g. "U0123456789")
+	SlackAllowedUserID string
+
 	// ── WhatsApp channel ─────────────────────────────────────────────────────
 
 	// WhatsAppStorePath is the path to the SQLite DB that stores the WhatsApp
@@ -235,6 +251,10 @@ func Load(envFile string) (*Config, error) {
 		MicrosoftClientID:     os.Getenv("MICROSOFT_CLIENT_ID"),
 		MicrosoftRefreshToken: os.Getenv("MICROSOFT_REFRESH_TOKEN"),
 
+		SlackBotToken:      os.Getenv("SLACK_BOT_TOKEN"),
+		SlackAppToken:      os.Getenv("SLACK_APP_TOKEN"),
+		SlackAllowedUserID: os.Getenv("SLACK_ALLOWED_USER_ID"),
+
 		DiscordBotToken: os.Getenv("DISCORD_BOT_TOKEN"),
 		DiscordGuildID:  os.Getenv("DISCORD_GUILD_ID"),
 		DiscordPrefix:   os.Getenv("DISCORD_PREFIX"),
@@ -279,6 +299,12 @@ func (c *Config) validate() error {
 	if c.CostguardURL == "" {
 		missing = append(missing, "COSTGUARD_URL is required — set it to your Costguard gateway base URL (e.g. http://localhost:8080)")
 	}
+	if c.SlackBotToken != "" && c.SlackAppToken == "" {
+		missing = append(missing, "SLACK_APP_TOKEN is required when Slack is enabled — generate an App-level token at api.slack.com/apps → Your App → Socket Mode")
+	}
+	if c.SlackBotToken != "" && c.SlackAllowedUserID == "" {
+		missing = append(missing, "SLACK_ALLOWED_USER_ID is required when Slack is enabled — find your member ID in your Slack profile → More → Profile → three-dot menu → Copy member ID")
+	}
 	if c.TelegramBotToken != "" && c.TelegramAllowedUserID == 0 {
 		missing = append(missing, "TELEGRAM_ALLOWED_USER_ID is required when Telegram is enabled — set it to your numeric Telegram user ID (find it via @userinfobot)")
 	}
@@ -295,6 +321,11 @@ func (c *Config) validate() error {
 // When false the server falls back to in-memory stores.
 func (c *Config) SQLiteConfigured() bool {
 	return c.SQLitePath != ""
+}
+
+// SlackConfigured reports whether a Slack bot token is present.
+func (c *Config) SlackConfigured() bool {
+	return c.SlackBotToken != ""
 }
 
 // DiscordConfigured reports whether a Discord bot token is present.
