@@ -182,6 +182,27 @@ type Config struct {
 	// Env: WHATSAPP_ALLOWED_JID (e.g. "96170123456@s.whatsapp.net")
 	WhatsAppAllowedJID string
 
+	// ── iMessage channel (BlueBubbles) ───────────────────────────────────────
+
+	// BlueBubblesURL is the base URL of the BlueBubbles server.
+	// Setting this enables the iMessage channel.
+	// Env: BLUEBUBBLES_URL (e.g. "http://localhost:1234")
+	BlueBubblesURL string
+
+	// BlueBubblesPassword is the BlueBubbles server password.
+	// Env: BLUEBUBBLES_PASSWORD (required when BLUEBUBBLES_URL is set)
+	BlueBubblesPassword string
+
+	// BlueBubblesAllowedHandle is the iMessage handle (phone number or email)
+	// that Agent OS will respond to. Required when BLUEBUBBLES_URL is set.
+	// Env: BLUEBUBBLES_ALLOWED_HANDLE (e.g. "+15551234567")
+	BlueBubblesAllowedHandle string
+
+	// BlueBubblesWebhookPort is the local TCP port on which Agent OS listens for
+	// BlueBubbles webhook events.
+	// Env: BLUEBUBBLES_WEBHOOK_PORT (default: 18789)
+	BlueBubblesWebhookPort int
+
 	// ── Persistence ───────────────────────────────────────────────────────────
 
 	// SQLitePath is the file path for the SQLite database used to persist user
@@ -276,6 +297,11 @@ func Load(envFile string) (*Config, error) {
 		WhatsAppStorePath:  os.Getenv("WHATSAPP_STORE_PATH"),
 		WhatsAppAllowedJID: os.Getenv("WHATSAPP_ALLOWED_JID"),
 
+		BlueBubblesURL:            os.Getenv("BLUEBUBBLES_URL"),
+		BlueBubblesPassword:       os.Getenv("BLUEBUBBLES_PASSWORD"),
+		BlueBubblesAllowedHandle:  os.Getenv("BLUEBUBBLES_ALLOWED_HANDLE"),
+		BlueBubblesWebhookPort:    envInt("BLUEBUBBLES_WEBHOOK_PORT", 18789),
+
 		SQLitePath: os.Getenv("SQLITE_PATH"),
 
 		HeartbeatInterval:  envDuration("HEARTBEAT_INTERVAL", 0),
@@ -310,6 +336,12 @@ func (c *Config) validate() error {
 	}
 	if c.WhatsAppStorePath != "" && c.WhatsAppAllowedJID == "" {
 		missing = append(missing, "WHATSAPP_ALLOWED_JID is required when WhatsApp is enabled — set it to your personal number's JID (e.g. 96170123456@s.whatsapp.net)")
+	}
+	if c.BlueBubblesURL != "" && c.BlueBubblesPassword == "" {
+		missing = append(missing, "BLUEBUBBLES_PASSWORD is required when iMessage is enabled")
+	}
+	if c.BlueBubblesURL != "" && c.BlueBubblesAllowedHandle == "" {
+		missing = append(missing, "BLUEBUBBLES_ALLOWED_HANDLE is required when iMessage is enabled — set it to your iMessage phone number or email")
 	}
 	if len(missing) > 0 {
 		return errors.New("config: " + strings.Join(missing, "; "))
@@ -351,6 +383,11 @@ func (c *Config) TelegramConfigured() bool {
 // WhatsAppConfigured reports whether a WhatsApp store path is set.
 func (c *Config) WhatsAppConfigured() bool {
 	return c.WhatsAppStorePath != ""
+}
+
+// BlueBubblesConfigured reports whether a BlueBubbles URL is set.
+func (c *Config) BlueBubblesConfigured() bool {
+	return c.BlueBubblesURL != ""
 }
 
 // SearchConfigured reports whether a search API key is present.
