@@ -18,6 +18,7 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/app"
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/discord"
+	"github.com/marcoantonios1/Agent-OS/internal/channels/imessage"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/slack"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/telegram"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
@@ -262,6 +263,29 @@ func main() {
 		slog.Warn("SLACK_BOT_TOKEN not set — Slack channel disabled")
 	}
 
+	// Start iMessage channel if configured.
+	var iMessageHandler *imessage.Handler
+	if cfg.BlueBubblesConfigured() {
+		iMessageHandler, err = imessage.New(imessage.Config{
+			BaseURL:       cfg.BlueBubblesURL,
+			Password:      cfg.BlueBubblesPassword,
+			AllowedHandle: cfg.BlueBubblesAllowedHandle,
+			WebhookPort:   cfg.BlueBubblesWebhookPort,
+		}, r, transcriber, synthesizer)
+		if err != nil {
+			slog.Error("imessage: setup failed", "error", err)
+			os.Exit(1)
+		}
+		reminderWorker.AddNotifier(iMessageHandler)
+		go func() {
+			if err := iMessageHandler.Start(ctx); err != nil {
+				slog.Error("imessage channel error", "error", err)
+			}
+		}()
+	} else {
+		slog.Warn("BLUEBUBBLES_URL not set — iMessage channel disabled")
+	}
+
 	// Start heartbeat worker if HEARTBEAT_INTERVAL is configured.
 	if cfg.HeartbeatConfigured() {
 		hbWorker := heartbeat.New(heartbeat.Config{
@@ -284,6 +308,9 @@ func main() {
 		if slackHandler != nil {
 			hbWorker.AddNotifier(types.ChannelID("slack"), slackHandler)
 		}
+		if iMessageHandler != nil {
+			hbWorker.AddNotifier(types.ChannelID("imessage"), iMessageHandler)
+		}
 		hbWorker.AddNotifier(types.ChannelID("web"), web.ReminderNotifier{})
 		go hbWorker.Run(ctx)
 	} else {
@@ -305,6 +332,9 @@ func main() {
 	}
 	if slackHandler != nil {
 		slackHandler.Stop()
+	}
+	if iMessageHandler != nil {
+		iMessageHandler.Stop()
 	}
 
 	slog.Info("shutting down — draining in-flight requests")
