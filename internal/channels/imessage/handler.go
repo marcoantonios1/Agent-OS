@@ -154,7 +154,7 @@ func (h *Handler) Start(ctx context.Context) error {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		go h.onWebhook(r.Context(), body)
+		go h.onWebhook(context.Background(), body)
 	})
 
 	h.server = &http.Server{

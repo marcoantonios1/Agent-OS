@@ -25,6 +25,7 @@ services:
       SQLITE_PATH: /data/agentos.db
     ports:
       - "${PORT:-9091}:9091"
+      - "${BLUEBUBBLES_WEBHOOK_PORT:-18789}:18789"
     volumes:
       - db_data:/data
       - workspace:/app/workspace
