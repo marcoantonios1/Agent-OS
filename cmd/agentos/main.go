@@ -281,6 +281,9 @@ func main() {
 		if telegramHandler != nil {
 			hbWorker.AddNotifier(types.ChannelID("telegram"), telegramHandler)
 		}
+		if slackHandler != nil {
+			hbWorker.AddNotifier(types.ChannelID("slack"), slackHandler)
+		}
 		hbWorker.AddNotifier(types.ChannelID("web"), web.ReminderNotifier{})
 		go hbWorker.Run(ctx)
 	} else {
@@ -299,6 +302,9 @@ func main() {
 	}
 	if telegramHandler != nil {
 		telegramHandler.Stop()
+	}
+	if slackHandler != nil {
+		slackHandler.Stop()
 	}
 
 	slog.Info("shutting down — draining in-flight requests")
