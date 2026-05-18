@@ -18,6 +18,7 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/app"
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/discord"
+	"github.com/marcoantonios1/Agent-OS/internal/channels/slack"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/telegram"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
 	"github.com/marcoantonios1/Agent-OS/internal/voice"
@@ -241,6 +242,24 @@ func main() {
 		}()
 	} else {
 		slog.Warn("TELEGRAM_BOT_TOKEN not set — Telegram channel disabled")
+	}
+
+	// Start Slack channel if configured.
+	var slackHandler *slack.Handler
+	if cfg.SlackConfigured() {
+		slackHandler, err = slack.New(r, cfg.SlackBotToken, cfg.SlackAppToken, cfg.SlackAllowedUserID, transcriber, synthesizer)
+		if err != nil {
+			slog.Error("slack: setup failed", "error", err)
+			os.Exit(1)
+		}
+		reminderWorker.AddNotifier(slackHandler)
+		go func() {
+			if err := slackHandler.Start(ctx); err != nil {
+				slog.Error("slack channel error", "error", err)
+			}
+		}()
+	} else {
+		slog.Warn("SLACK_BOT_TOKEN not set — Slack channel disabled")
 	}
 
 	// Start heartbeat worker if HEARTBEAT_INTERVAL is configured.
