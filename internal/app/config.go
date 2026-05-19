@@ -235,6 +235,18 @@ type Config struct {
 	// Env: HEARTBEAT_PROMPT
 	HeartbeatPrompt string
 
+	// ── Video understanding ───────────────────────────────────────────────────
+
+	// VideoMaxFrames is the maximum number of frames extracted from a video for
+	// multimodal LLM analysis.
+	// Env: VIDEO_MAX_FRAMES (default: 8)
+	VideoMaxFrames int
+
+	// VideoMaxSizeMB is the maximum video file size in megabytes accepted for
+	// processing. Videos larger than this are rejected with a user-friendly message.
+	// Env: VIDEO_MAX_SIZE_MB (default: 50)
+	VideoMaxSizeMB int
+
 	// ── Context compaction ────────────────────────────────────────────────────
 
 	// CompactionThreshold is the estimated token count at which history is
