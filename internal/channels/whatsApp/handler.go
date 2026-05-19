@@ -32,7 +32,12 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/voice"
 )
 
-var errUnsupportedMediaType = errors.New("unsupported media type")
+var (
+	errUnsupportedMediaType = errors.New("unsupported media type")
+	errVideoTooLarge        = errors.New("video exceeds configured size limit")
+	errFfmpegMissing        = errors.New("ffmpeg not available for video analysis")
+	errVideoProcessFailed   = errors.New("video frame extraction failed")
+)
 
 // mediaDownloader abstracts whatsmeow.Client.DownloadAny for testing.
 type mediaDownloader interface {
@@ -50,19 +55,32 @@ type msgSender interface {
 // Dispatcher. Only messages from allowedJID are processed; all others are
 // silently dropped.
 type Handler struct {
-	client      *whatsmeow.Client
-	downloader  mediaDownloader  // defaults to client; overridden in tests
-	sender      msgSender        // defaults to client; overridden in tests
-	dispatcher  web.Dispatcher
-	allowedJID  string           // only respond to this JID; validated non-empty by New
-	transcriber voice.Transcriber
-	synthesizer voice.Synthesizer
-	log         *slog.Logger
+	client         *whatsmeow.Client
+	downloader     mediaDownloader // defaults to client; overridden in tests
+	sender         msgSender       // defaults to client; overridden in tests
+	dispatcher     web.Dispatcher
+	allowedJID     string // only respond to this JID; validated non-empty by New
+	transcriber    voice.Transcriber
+	synthesizer    voice.Synthesizer
+	log            *slog.Logger
+	videoMaxFrames int   // max frames to extract from a video; default 8
+	videoMaxSizeMB int64 // max video size in MB before rejection; default 50
 }
 
 // SetSynthesizer replaces the handler's synthesizer. When set and the inbound
 // message was a voice message, the agent response is synthesized back to audio.
 func (h *Handler) SetSynthesizer(s voice.Synthesizer) { h.synthesizer = s }
+
+// SetVideoConfig overrides the video processing limits.
+// maxFrames must be >= 1; maxSizeMB must be > 0. Zero values are ignored.
+func (h *Handler) SetVideoConfig(maxFrames int, maxSizeMB int64) {
+	if maxFrames > 0 {
+		h.videoMaxFrames = maxFrames
+	}
+	if maxSizeMB > 0 {
+		h.videoMaxSizeMB = maxSizeMB
+	}
+}
 
 // New creates a Handler.
 //   - dispatcher is the router (satisfies web.Dispatcher and optionally web.StreamDispatcher).
@@ -90,14 +108,16 @@ func New(dispatcher web.Dispatcher, storePath, allowedJID string, transcriber vo
 	client.EnableAutoReconnect = true
 
 	h := &Handler{
-		client:      client,
-		downloader:  client,
-		sender:      client,
-		dispatcher:  dispatcher,
-		allowedJID:  allowedJID,
-		transcriber: transcriber,
-		synthesizer: &voice.NoopSynthesizer{},
-		log:         slog.Default(),
+		client:         client,
+		downloader:     client,
+		sender:         client,
+		dispatcher:     dispatcher,
+		allowedJID:     allowedJID,
+		transcriber:    transcriber,
+		synthesizer:    &voice.NoopSynthesizer{},
+		log:            slog.Default(),
+		videoMaxFrames: 8,
+		videoMaxSizeMB: 50,
 	}
 	client.AddEventHandler(h.onEvent)
 	return h, nil
@@ -222,8 +242,18 @@ func (h *Handler) onMessage(evt *events.Message) {
 	}
 
 	attParts, err := h.processMedia(ctx, evt.Message)
-	if errors.Is(err, errUnsupportedMediaType) {
+	switch {
+	case errors.Is(err, errUnsupportedMediaType):
 		h.send(ctx, chat, "I can read images and PDFs — other file types aren't supported yet") //nolint:errcheck
+		return
+	case errors.Is(err, errVideoTooLarge):
+		h.send(ctx, chat, fmt.Sprintf("That video is too large to analyse — max %dMB.", h.videoMaxSizeMB)) //nolint:errcheck
+		return
+	case errors.Is(err, errFfmpegMissing):
+		h.send(ctx, chat, "Video analysis isn't available on this server.") //nolint:errcheck
+		return
+	case errors.Is(err, errVideoProcessFailed):
+		h.send(ctx, chat, "Sorry, I couldn't process that video.") //nolint:errcheck
 		return
 	}
 
@@ -480,6 +510,33 @@ func (h *Handler) processMedia(ctx context.Context, msg *waE2E.Message) ([]agent
 			Text:     text,
 			Filename: filename,
 		}}, nil
+	}
+
+	if vid := msg.GetVideoMessage(); vid != nil {
+		sizeBytes := int64(vid.GetFileLength())
+		if sizeBytes > 0 && h.videoMaxSizeMB > 0 && sizeBytes > h.videoMaxSizeMB*1024*1024 {
+			return nil, errVideoTooLarge
+		}
+		data, err := h.downloader.DownloadAny(ctx, msg)
+		if err != nil {
+			h.logger().WarnContext(ctx, "whatsapp: video download failed", "error", err)
+			return nil, nil
+		}
+		if h.videoMaxSizeMB > 0 && int64(len(data)) > h.videoMaxSizeMB*1024*1024 {
+			return nil, errVideoTooLarge
+		}
+		mimeType := vid.GetMimetype()
+		if mimeType == "" || !strings.HasPrefix(mimeType, "video/") {
+			mimeType = "video/mp4"
+		}
+		frames, extractErr := attachments.ExtractFrames(data, mimeType, h.videoMaxFrames)
+		if errors.Is(extractErr, attachments.ErrFfmpegUnavailable) {
+			return nil, errFfmpegMissing
+		}
+		if extractErr != nil {
+			return nil, errVideoProcessFailed
+		}
+		return attachments.VideoToContentParts(frames, "video.mp4"), nil
 	}
 
 	return nil, nil

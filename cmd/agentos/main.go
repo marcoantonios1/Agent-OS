@@ -215,6 +215,7 @@ func main() {
 			os.Exit(1)
 		}
 		whatsAppHandler.SetSynthesizer(synthesizer)
+		whatsAppHandler.SetVideoConfig(cfg.VideoMaxFrames, int64(cfg.VideoMaxSizeMB))
 		reminderWorker.AddNotifier(whatsAppHandler)
 		go func() {
 			if err := whatsAppHandler.Start(ctx); err != nil {
@@ -235,6 +236,7 @@ func main() {
 		}
 		telegramHandler.SetTranscriber(transcriber)
 		telegramHandler.SetSynthesizer(synthesizer)
+		telegramHandler.SetVideoConfig(cfg.VideoMaxFrames, int64(cfg.VideoMaxSizeMB))
 		reminderWorker.AddNotifier(telegramHandler)
 		go func() {
 			if err := telegramHandler.Start(ctx); err != nil {
@@ -253,6 +255,7 @@ func main() {
 			slog.Error("slack: setup failed", "error", err)
 			os.Exit(1)
 		}
+		slackHandler.SetVideoConfig(cfg.VideoMaxFrames, int64(cfg.VideoMaxSizeMB))
 		reminderWorker.AddNotifier(slackHandler)
 		go func() {
 			if err := slackHandler.Start(ctx); err != nil {

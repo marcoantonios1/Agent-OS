@@ -54,6 +54,7 @@ type AttachedFile struct {
 	Name               string `json:"name"`
 	URLPrivate         string `json:"url_private"`
 	URLPrivateDownload string `json:"url_private_download"`
+	Size               int64  `json:"size"`
 }
 
 // IncomingMessage is the internal representation of a parsed Slack DM event.
@@ -85,15 +86,17 @@ type rawEventsPayload struct {
 // Handler listens for Slack Socket Mode events and routes DMs through the
 // shared Dispatcher (router.Router). One Handler per bot token.
 type Handler struct {
-	api         SlackAPI
-	socket      *socketmode.Client
-	dispatcher  web.Dispatcher
-	allowedUID  string
-	botToken    string // used to authenticate file download requests
-	transcriber voice.Transcriber
-	synthesizer voice.Synthesizer
-	log         *slog.Logger
-	httpClient  *http.Client
+	api            SlackAPI
+	socket         *socketmode.Client
+	dispatcher     web.Dispatcher
+	allowedUID     string
+	botToken       string // used to authenticate file download requests
+	transcriber    voice.Transcriber
+	synthesizer    voice.Synthesizer
+	log            *slog.Logger
+	httpClient     *http.Client
+	videoMaxFrames int   // max frames to extract from a video; default 8
+	videoMaxSizeMB int64 // max video size in MB before rejection; default 50
 }
 
 // New creates a Handler, validates the bot token via AuthTest, and sets up the
@@ -123,15 +126,17 @@ func New(
 	socket := socketmode.New(client)
 
 	return &Handler{
-		api:         client,
-		socket:      socket,
-		dispatcher:  dispatcher,
-		allowedUID:  allowedUID,
-		botToken:    botToken,
-		transcriber: tr,
-		synthesizer: sy,
-		log:         slog.Default(),
-		httpClient:  http.DefaultClient,
+		api:            client,
+		socket:         socket,
+		dispatcher:     dispatcher,
+		allowedUID:     allowedUID,
+		botToken:       botToken,
+		transcriber:    tr,
+		synthesizer:    sy,
+		log:            slog.Default(),
+		httpClient:     http.DefaultClient,
+		videoMaxFrames: 8,
+		videoMaxSizeMB: 50,
 	}, nil
 }
 
@@ -139,14 +144,16 @@ func New(
 // api is a mock implementation of SlackAPI.
 func NewForTest(api SlackAPI, dispatcher web.Dispatcher, allowedUID string) *Handler {
 	return &Handler{
-		api:         api,
-		dispatcher:  dispatcher,
-		allowedUID:  allowedUID,
-		botToken:    "xoxb-test",
-		transcriber: &voice.NoopTranscriber{},
-		synthesizer: &voice.NoopSynthesizer{},
-		log:         slog.Default(),
-		httpClient:  http.DefaultClient,
+		api:            api,
+		dispatcher:     dispatcher,
+		allowedUID:     allowedUID,
+		botToken:       "xoxb-test",
+		transcriber:    &voice.NoopTranscriber{},
+		synthesizer:    &voice.NoopSynthesizer{},
+		log:            slog.Default(),
+		httpClient:     http.DefaultClient,
+		videoMaxFrames: 8,
+		videoMaxSizeMB: 50,
 	}
 }
 
@@ -155,6 +162,17 @@ func (h *Handler) SetTranscriber(t voice.Transcriber) { h.transcriber = t }
 
 // SetSynthesizer replaces the handler's synthesizer.
 func (h *Handler) SetSynthesizer(s voice.Synthesizer) { h.synthesizer = s }
+
+// SetVideoConfig overrides the video processing limits.
+// maxFrames must be >= 1; maxSizeMB must be > 0. Zero values are ignored.
+func (h *Handler) SetVideoConfig(maxFrames int, maxSizeMB int64) {
+	if maxFrames > 0 {
+		h.videoMaxFrames = maxFrames
+	}
+	if maxSizeMB > 0 {
+		h.videoMaxSizeMB = maxSizeMB
+	}
+}
 
 // SetHTTPClient replaces the handler's HTTP client. Used in tests to intercept
 // file download requests without hitting real Slack servers.
@@ -278,6 +296,14 @@ func (h *Handler) handleMessage(ctx context.Context, msg *IncomingMessage) {
 		"channel", "slack",
 	)
 
+	// Handle video attachments before the general file loop.
+	for _, f := range msg.Files {
+		if strings.HasPrefix(f.MimeType, "video/") {
+			h.handleVideo(ctx, msg, sid, f)
+			return
+		}
+	}
+
 	// Handle audio attachments via transcription.
 	for _, f := range msg.Files {
 		if strings.HasPrefix(f.MimeType, "audio/") {
@@ -336,6 +362,63 @@ func (h *Handler) handleAudio(ctx context.Context, msg *IncomingMessage, sid str
 		Timestamp: time.Now(),
 	}
 	h.routeAndRespond(ctx, msg.Channel, sid, inbound, true)
+}
+
+// handleVideo downloads a Slack video file, extracts frames via ffmpeg, and
+// routes the result alongside any caption text from the message.
+func (h *Handler) handleVideo(ctx context.Context, msg *IncomingMessage, sid string, f AttachedFile) {
+	h.log.InfoContext(ctx, "slack: video message received", "session_id", sid, "mime", f.MimeType)
+
+	if h.videoMaxSizeMB > 0 && f.Size > 0 && f.Size > h.videoMaxSizeMB*1024*1024 {
+		h.sendText(msg.Channel, fmt.Sprintf("That video is too large to analyse — max %dMB.", h.videoMaxSizeMB))
+		return
+	}
+
+	data, err := h.downloadFile(ctx, f)
+	if err != nil {
+		h.log.WarnContext(ctx, "slack: failed to download video",
+			"session_id", sid, "file_id", f.ID, "error", err)
+		h.sendText(msg.Channel, "Sorry, I couldn't download that video.")
+		return
+	}
+
+	if h.videoMaxSizeMB > 0 && int64(len(data)) > h.videoMaxSizeMB*1024*1024 {
+		h.sendText(msg.Channel, fmt.Sprintf("That video is too large to analyse — max %dMB.", h.videoMaxSizeMB))
+		return
+	}
+
+	mimeType := f.MimeType
+	if mimeType == "" {
+		mimeType = "video/mp4"
+	}
+	frames, extractErr := attachments.ExtractFrames(data, mimeType, h.videoMaxFrames)
+	if errors.Is(extractErr, attachments.ErrFfmpegUnavailable) {
+		h.sendText(msg.Channel, "Video analysis isn't available on this server.")
+		return
+	}
+	if extractErr != nil {
+		h.log.WarnContext(ctx, "slack: video frame extraction failed",
+			"session_id", sid, "error", extractErr)
+		h.sendText(msg.Channel, "Sorry, I couldn't process that video.")
+		return
+	}
+
+	videoParts := attachments.VideoToContentParts(frames, f.Name)
+	var parts []types.ContentPart
+	if msg.Text != "" {
+		parts = append(parts, types.ContentPart{Type: "text", Text: msg.Text})
+	}
+	parts = append(parts, videoParts...)
+
+	inbound := types.InboundMessage{
+		ChannelID: types.ChannelID("slack"),
+		UserID:    msg.User,
+		SessionID: sid,
+		Text:      msg.Text,
+		Timestamp: time.Now(),
+		Parts:     parts,
+	}
+	h.routeAndRespond(ctx, msg.Channel, sid, inbound, false)
 }
 
 // processFile downloads and converts a single Slack file into ContentParts.

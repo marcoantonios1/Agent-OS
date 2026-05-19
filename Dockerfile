@@ -13,10 +13,16 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/agentos
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/migrate  ./cmd/migrate
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
-FROM alpine:3.20
+FROM debian:bookworm-slim
 
-# ca-certificates: needed for outbound HTTPS (LLM gateway, search API, OAuth).
-RUN apk add --no-cache ca-certificates tzdata
+# ffmpeg: video frame extraction for multimodal LLM analysis.
+# ca-certificates: outbound HTTPS (LLM gateway, search API, OAuth).
+# tzdata: correct time zone handling in scheduled reminders.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    ca-certificates \
+    tzdata \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
