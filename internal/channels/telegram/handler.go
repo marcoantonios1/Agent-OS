@@ -218,13 +218,42 @@ func (h *Handler) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		inbound := h.buildInbound(msg, sid, parts)
 		h.routeAndRespond(ctx, msg.Chat.ID, sid, inbound, false)
 
+	case msg.Video != nil:
+		vid := msg.Video
+		if int64(vid.FileSize) > h.videoMaxSizeMB*1024*1024 {
+			h.sendText(msg.Chat.ID,
+				fmt.Sprintf("That video is too large to analyse — max %dMB.", h.videoMaxSizeMB))
+			return
+		}
+		mimeType := vid.MimeType
+		if mimeType == "" {
+			mimeType = "video/mp4"
+		}
+		filename := vid.FileName
+		if filename == "" {
+			filename = "video.mp4"
+		}
+		parts, err := h.downloadFile(ctx, vid.FileID, mimeType, filename)
+		if errors.Is(err, attachments.ErrFfmpegUnavailable) {
+			h.sendText(msg.Chat.ID, "Video analysis isn't available on this server.")
+			return
+		}
+		if err != nil {
+			h.log.WarnContext(ctx, "telegram: failed to process video",
+				"session_id", sid, "error", err)
+			h.sendText(msg.Chat.ID, "Sorry, I couldn't process that video.")
+			return
+		}
+		inbound := h.buildInbound(msg, sid, parts)
+		h.routeAndRespond(ctx, msg.Chat.ID, sid, inbound, false)
+
 	case msg.Text != "":
 		inbound := h.buildInbound(msg, sid, nil)
 		h.routeAndRespond(ctx, msg.Chat.ID, sid, inbound, false)
 
 	default:
 		h.sendText(msg.Chat.ID,
-			"I can handle text, photos, and PDF documents. Other message types aren't supported yet.")
+			"I can handle text, photos, PDF documents, and videos. Other message types aren't supported yet.")
 	}
 }
 
@@ -488,6 +517,13 @@ func (h *Handler) downloadFile(ctx context.Context, fileID, mimeType, filename s
 			Text:     text,
 			Filename: filename,
 		}}, nil
+
+	case strings.HasPrefix(mimeType, "video/"):
+		frames, err := attachments.ExtractFrames(data, mimeType, h.videoMaxFrames)
+		if err != nil {
+			return nil, fmt.Errorf("extract video frames: %w", err)
+		}
+		return attachments.VideoToContentParts(frames, filename), nil
 	}
 
 	return nil, fmt.Errorf("unsupported MIME type %q", mimeType)
