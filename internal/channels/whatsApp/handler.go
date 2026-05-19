@@ -242,8 +242,18 @@ func (h *Handler) onMessage(evt *events.Message) {
 	}
 
 	attParts, err := h.processMedia(ctx, evt.Message)
-	if errors.Is(err, errUnsupportedMediaType) {
+	switch {
+	case errors.Is(err, errUnsupportedMediaType):
 		h.send(ctx, chat, "I can read images and PDFs — other file types aren't supported yet") //nolint:errcheck
+		return
+	case errors.Is(err, errVideoTooLarge):
+		h.send(ctx, chat, fmt.Sprintf("That video is too large to analyse — max %dMB.", h.videoMaxSizeMB)) //nolint:errcheck
+		return
+	case errors.Is(err, errFfmpegMissing):
+		h.send(ctx, chat, "Video analysis isn't available on this server.") //nolint:errcheck
+		return
+	case errors.Is(err, errVideoProcessFailed):
+		h.send(ctx, chat, "Sorry, I couldn't process that video.") //nolint:errcheck
 		return
 	}
 
@@ -500,6 +510,33 @@ func (h *Handler) processMedia(ctx context.Context, msg *waE2E.Message) ([]agent
 			Text:     text,
 			Filename: filename,
 		}}, nil
+	}
+
+	if vid := msg.GetVideoMessage(); vid != nil {
+		sizeBytes := int64(vid.GetFileLength())
+		if sizeBytes > 0 && h.videoMaxSizeMB > 0 && sizeBytes > h.videoMaxSizeMB*1024*1024 {
+			return nil, errVideoTooLarge
+		}
+		data, err := h.downloader.DownloadAny(ctx, msg)
+		if err != nil {
+			h.logger().WarnContext(ctx, "whatsapp: video download failed", "error", err)
+			return nil, nil
+		}
+		if h.videoMaxSizeMB > 0 && int64(len(data)) > h.videoMaxSizeMB*1024*1024 {
+			return nil, errVideoTooLarge
+		}
+		mimeType := vid.GetMimetype()
+		if mimeType == "" || !strings.HasPrefix(mimeType, "video/") {
+			mimeType = "video/mp4"
+		}
+		frames, extractErr := attachments.ExtractFrames(data, mimeType, h.videoMaxFrames)
+		if errors.Is(extractErr, attachments.ErrFfmpegUnavailable) {
+			return nil, errFfmpegMissing
+		}
+		if extractErr != nil {
+			return nil, errVideoProcessFailed
+		}
+		return attachments.VideoToContentParts(frames, "video.mp4"), nil
 	}
 
 	return nil, nil
