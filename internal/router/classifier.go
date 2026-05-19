@@ -189,6 +189,9 @@ func (c *LLMClassifier) Classify(ctx context.Context, sessionID, input string, h
 }
 
 // buildMessages constructs the message slice for the classifier request.
+// Parts (images, video frames) are stripped from every turn — the intent
+// classifier is a small text-only model; sending binary image data causes it
+// to hallucinate instead of returning JSON.
 func buildMessages(history []types.ConversationTurn, input string) []types.ConversationTurn {
 	msgs := make([]types.ConversationTurn, 0, len(history)+2)
 	// Use system role so the instruction works across all model families.
@@ -196,7 +199,12 @@ func buildMessages(history []types.ConversationTurn, input string) []types.Conve
 		Role:    "system",
 		Content: systemPrompt,
 	})
-	msgs = append(msgs, history...)
+	for _, turn := range history {
+		msgs = append(msgs, types.ConversationTurn{
+			Role:    turn.Role,
+			Content: turn.Content,
+		})
+	}
 	msgs = append(msgs, types.ConversationTurn{
 		Role:    "user",
 		Content: input,
