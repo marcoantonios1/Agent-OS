@@ -323,6 +323,9 @@ func Load(envFile string) (*Config, error) {
 		HeartbeatPrompt:    os.Getenv("HEARTBEAT_PROMPT"),
 
 		CompactionThreshold: envInt("COMPACTION_THRESHOLD", 6000),
+
+		VideoMaxFrames: envInt("VIDEO_MAX_FRAMES", 8),
+		VideoMaxSizeMB: envInt("VIDEO_MAX_SIZE_MB", 50),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -354,6 +357,12 @@ func (c *Config) validate() error {
 	}
 	if c.BlueBubblesURL != "" && c.BlueBubblesAllowedHandle == "" {
 		missing = append(missing, "BLUEBUBBLES_ALLOWED_HANDLE is required when iMessage is enabled — set it to your iMessage phone number or email")
+	}
+	if c.VideoMaxFrames < 1 {
+		missing = append(missing, fmt.Sprintf("VIDEO_MAX_FRAMES must be >= 1 (got %d)", c.VideoMaxFrames))
+	}
+	if c.VideoMaxSizeMB <= 0 {
+		missing = append(missing, fmt.Sprintf("VIDEO_MAX_SIZE_MB must be > 0 (got %d)", c.VideoMaxSizeMB))
 	}
 	if len(missing) > 0 {
 		return errors.New("config: " + strings.Join(missing, "; "))

@@ -50,8 +50,10 @@ type Handler struct {
 	allowedUID  int64 // silently drop messages from any other user ID
 	transcriber voice.Transcriber
 	synthesizer voice.Synthesizer
-	log         *slog.Logger
-	httpClient  *http.Client
+	log            *slog.Logger
+	httpClient     *http.Client
+	videoMaxFrames int   // max frames to extract from a video attachment; default 8
+	videoMaxSizeMB int64 // max video file size in MB before rejection; default 50
 }
 
 // SetTranscriber replaces the handler's transcriber. Call after New() to enable
@@ -74,14 +76,16 @@ func New(dispatcher web.Dispatcher, token string, allowedUID int64) (*Handler, e
 		return nil, fmt.Errorf("telegram: create bot: %w", err)
 	}
 	return &Handler{
-		bot:         bot,
-		username:    bot.Self.UserName,
-		dispatcher:  dispatcher,
-		allowedUID:  allowedUID,
-		transcriber: &voice.NoopTranscriber{},
-		synthesizer: &voice.NoopSynthesizer{},
-		log:         slog.Default(),
-		httpClient:  http.DefaultClient,
+		bot:            bot,
+		username:       bot.Self.UserName,
+		dispatcher:     dispatcher,
+		allowedUID:     allowedUID,
+		transcriber:    &voice.NoopTranscriber{},
+		synthesizer:    &voice.NoopSynthesizer{},
+		log:            slog.Default(),
+		httpClient:     http.DefaultClient,
+		videoMaxFrames: 8,
+		videoMaxSizeMB: 50,
 	}, nil
 }
 
@@ -89,14 +93,27 @@ func New(dispatcher web.Dispatcher, token string, allowedUID int64) (*Handler, e
 // validation. bot is a mock implementation of BotAPI.
 func NewForTest(dispatcher web.Dispatcher, bot BotAPI, allowedUID int64) *Handler {
 	return &Handler{
-		bot:         bot,
-		username:    "testbot",
-		dispatcher:  dispatcher,
-		allowedUID:  allowedUID,
-		transcriber: &voice.NoopTranscriber{},
-		synthesizer: &voice.NoopSynthesizer{},
-		log:         slog.Default(),
-		httpClient:  http.DefaultClient,
+		bot:            bot,
+		username:       "testbot",
+		dispatcher:     dispatcher,
+		allowedUID:     allowedUID,
+		transcriber:    &voice.NoopTranscriber{},
+		synthesizer:    &voice.NoopSynthesizer{},
+		log:            slog.Default(),
+		httpClient:     http.DefaultClient,
+		videoMaxFrames: 8,
+		videoMaxSizeMB: 50,
+	}
+}
+
+// SetVideoConfig overrides the video processing limits.
+// maxFrames must be >= 1; maxSizeMB must be > 0. Zero values are ignored.
+func (h *Handler) SetVideoConfig(maxFrames int, maxSizeMB int64) {
+	if maxFrames > 0 {
+		h.videoMaxFrames = maxFrames
+	}
+	if maxSizeMB > 0 {
+		h.videoMaxSizeMB = maxSizeMB
 	}
 }
 
