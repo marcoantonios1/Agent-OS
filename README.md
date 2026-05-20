@@ -8,21 +8,21 @@ No cloud AI API keys. No data leaving your infrastructure.
 
 ## How it works
 
-You talk to Agent OS through any channel — web, Discord, or WhatsApp. The router classifies your intent and dispatches to the right agent. Agents run an agentic loop (LLM ↔ tools) and stream back a response. Session history, user preferences, and reminders all persist in a local SQLite database.
+You talk to Agent OS through any channel — web, Discord, WhatsApp, Telegram, Slack, or iMessage. The router classifies your intent and dispatches to the right agent. Agents run an agentic loop (LLM ↔ tools) and stream back a response. Session history, user preferences, and reminders all persist in a local SQLite database.
 
 ```
-You (Web · Discord · WhatsApp)
-           │
-           ▼
-    Router + Classifier
-           │
-   ┌───────┼───────────┬────────────┐
-   ▼       ▼           ▼            ▼
- Comms  Builder    Research     Generic agents
-  │       │           │         (agents/ folder)
-  ▼       ▼           ▼              ▼
-Email   Code       WebSearch    Any declared
-Cal     Shell      WebFetch     skill subset
+You (Web · Discord · WhatsApp · Telegram · Slack · iMessage)
+                       │
+                       ▼
+              Router + Classifier
+                       │
+   ┌───────┬───────────┼────────────┬────────────┐
+   ▼       ▼           ▼            ▼            ▼
+ Comms  Builder    Research     Doctor      Generic agents
+  │       │           │           │         (agents/ folder)
+  ▼       ▼           ▼           ▼              ▼
+Email   Code       WebSearch   Medical      Any declared
+Cal     Shell      WebFetch    Images       skill subset
 Profile Project
 Reminder
 ```
@@ -159,9 +159,17 @@ Set `DISCORD_BOT_TOKEN` in `.env`. DMs are always routed; in server channels a c
 Set `WHATSAPP_STORE_PATH` in `.env`. On first run a QR code prints to the logs — scan it with WhatsApp → Linked Devices. The session persists automatically.
 
 ### Telegram — [setup guide](docs/telegram-setup.md)
-Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_USER_ID` in `.env`. The bot accepts messages only from the configured user ID (single-user whitelist). Supports text, images, PDFs, and voice messages.
+Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_USER_ID` in `.env`. The bot accepts messages only from the configured user ID (single-user whitelist). Supports text, images, PDFs, voice messages, and video.
 
 **Voice messages** — set `VOICE_TRANSCRIPTION=enabled` to enable speech-to-text (requires a Whisper-compatible endpoint). Set `VOICE_TTS=enabled` to synthesize replies back to audio.
+
+**Video messages** — requires ffmpeg in PATH (included in the Docker image). Agent OS extracts frames evenly across the video, encodes them as JPEG, and sends them to the LLM as image content parts alongside a text descriptor. Tune with `VIDEO_MAX_FRAMES` and `VIDEO_MAX_SIZE_MB`.
+
+### Slack — [setup guide](docs/slack-setup.md)
+Set `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, and `SLACK_ALLOWED_USER_ID` in `.env`. Requires Socket Mode to be enabled in your Slack app. DMs from the configured user are routed; all others are silently ignored. Supports text, images, PDFs, and video uploads.
+
+### iMessage — [setup guide](docs/imessage-setup.md)
+Set `BLUEBUBBLES_URL`, `BLUEBUBBLES_PASSWORD`, and `BLUEBUBBLES_ALLOWED_HANDLE` in `.env`. Requires [BlueBubbles Server](https://bluebubbles.app) running on a Mac with iMessage active. Agent OS registers a local webhook (`BLUEBUBBLES_WEBHOOK_PORT`, default 18789) to receive inbound messages. Supports text; replies are sent back via the BlueBubbles REST API.
 
 ---
 
@@ -315,6 +323,9 @@ internal/
     web/                  HTTP: /v1/chat, /v1/chat/stream, /healthz, /readyz
     discord/              Discord gateway
     whatsApp/             WhatsApp Web gateway
+    telegram/             Telegram Bot API gateway (text, images, PDFs, voice, video)
+    slack/                Slack Socket Mode gateway (text, images, PDFs, video)
+    imessage/             iMessage via BlueBubbles webhook
   tools/
     email/                email_list/read/search/draft/send + Gmail/Outlook
     calendar/             calendar_list/read/create/update + Google/Outlook
@@ -323,6 +334,7 @@ internal/
     reminder/             reminder_set/cancel/list + background worker
     userprofile/          user_profile_read/update
     project/              project_list/load
+  attachments/            video frame extraction (ffmpeg) and multimodal ContentPart assembly
   skills/                 NewGlobalRegistry — wires all tools into one registry
   memory/                 SQLite + in-memory store implementations
   costguard/              LLM client (Complete + Stream) with backoff retry
@@ -369,6 +381,12 @@ test/
 | **5** | Community skills — drop-in `skills/community/` extension point | ✓ |
 | **5** | Example community skills: `weather`, `stock_price`, `url_shorten` | ✓ |
 | **5** | Skills reference doc (`docs/skills.md`) with TOC and community section | ✓ |
+| **6** | Slack channel — text, images, PDFs, video, Socket Mode, single-user whitelist | ✓ |
+| **6** | iMessage channel (BlueBubbles) — webhook ingestion, whitelist enforcement, text replies | ✓ |
+| **6** | Video processing pipeline — ffmpeg frame extraction, base64 JPEG ContentParts, LLM routing | ✓ |
+| **6** | Video support on Telegram, WhatsApp, and Slack — size gate, graceful ffmpeg fallback | ✓ |
+| **6** | Classifier multimodal fix — strips image Parts before sending to non-vision classifier model | ✓ |
+| **6** | Doctor agent image analysis — MRI, X-ray, ultrasound, lab result interpretation | ✓ |
 
 ---
 
