@@ -8,6 +8,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/mdp/qrterminal/v3 v3.2.1
+	github.com/slack-go/slack v0.23.1
 	go.mau.fi/whatsmeow v0.0.0-20260421083005-5b8886176ff7
 	golang.org/x/oauth2 v0.36.0
 	google.golang.org/api v0.275.0
@@ -38,7 +39,6 @@ require (
 	github.com/petermattis/goid v0.0.0-20260330135022-df67b199bc81 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rs/zerolog v1.35.0 // indirect
-	github.com/slack-go/slack v0.23.1 // indirect
 	github.com/vektah/gqlparser/v2 v2.5.27 // indirect
 	go.mau.fi/libsignal v0.2.1 // indirect
 	go.mau.fi/util v0.9.8 // indirect
