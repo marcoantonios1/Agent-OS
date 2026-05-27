@@ -11,6 +11,7 @@ import (
 	"time"
 
 	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
+	_ "github.com/mattn/go-sqlite3" // CGO sqlite3 driver — required for sqlite-vec linkage
 	"github.com/marcoantonios1/Agent-OS/internal/agents/builder"
 	"github.com/marcoantonios1/Agent-OS/skills/community"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/generic"
