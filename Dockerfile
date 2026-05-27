@@ -16,10 +16,11 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 # Copy source and build both binaries.
-# agentos needs CGO for sqlite-vec; migrate does not.
+# Both need CGO_ENABLED=1: memory.OpenDB uses mattn/go-sqlite3, and agentos
+# additionally loads sqlite-vec for vector search.
 COPY . .
 RUN CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/agentos  ./cmd/agentos
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/migrate  ./cmd/migrate
+RUN CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/migrate  ./cmd/migrate
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
