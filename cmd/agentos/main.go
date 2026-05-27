@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/builder"
 	"github.com/marcoantonios1/Agent-OS/skills/community"
 	"github.com/marcoantonios1/Agent-OS/internal/agents/generic"
@@ -28,6 +29,7 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/channels/whatsApp"
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 	"github.com/marcoantonios1/Agent-OS/internal/memory"
+	"github.com/marcoantonios1/Agent-OS/internal/memory/episodic"
 	agentOAuth "github.com/marcoantonios1/Agent-OS/internal/oauth"
 	"github.com/marcoantonios1/Agent-OS/internal/observability"
 	"github.com/marcoantonios1/Agent-OS/internal/router"
@@ -62,11 +64,14 @@ func main() {
 	store := memory.NewStore()
 	defer store.Close()
 
+	llm := costguard.New(cfg.CostguardURL, cfg.CostguardAPIKey)
+
 	// User, project, reminder, and personality stores: SQLite when SQLITE_PATH is set, in-memory otherwise.
 	var projectStore sessions.ProjectStore
 	var userStore sessions.UserStore
 	var reminderStore sessions.ReminderStore
 	var personalityStore sessions.PersonalityStore
+	sqlite_vec.Auto()
 	if cfg.SQLiteConfigured() {
 		db, err := memory.OpenDB(cfg.SQLitePath)
 		if err != nil {
@@ -77,6 +82,17 @@ func main() {
 		userStore = memory.NewSQLiteUserStore(db)
 		reminderStore = memory.NewSQLiteReminderStore(db)
 		personalityStore = memory.NewSQLitePersonalityStore(db)
+
+		embedFn := func(ctx context.Context, text string) ([]float32, error) {
+			return llm.Embed(ctx, text)
+		}
+		episodicStore, err := episodic.NewSQLiteStore(db, embedFn)
+		if err != nil {
+			slog.Error("episodic: failed to create store", "error", err)
+			os.Exit(1)
+		}
+		_ = episodicStore // wire into agents/router as needed in subsequent issues
+
 		slog.Info("using SQLite persistence", "path", cfg.SQLitePath)
 	} else {
 		projectStore = memory.NewProjectStore()
@@ -86,8 +102,6 @@ func main() {
 		slog.Warn("SQLITE_PATH not set — using in-memory stores (data lost on restart)")
 	}
 	approvals := approval.NewMemoryStore()
-
-	llm := costguard.New(cfg.CostguardURL, cfg.CostguardAPIKey)
 	classifier := router.NewLLMClassifier(llm, cfg.ClassifierModel)
 
 	reminderWorker := reminder.NewWorker(reminderStore)
