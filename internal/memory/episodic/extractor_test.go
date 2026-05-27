@@ -2,25 +2,37 @@ package episodic
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
 )
 
-// mockStore records SaveText calls.
+// mockStore records SaveText calls. mu guards saved for race-safe access.
 type mockStore struct {
+	mu    sync.Mutex
 	saved []Memory
 	err   error
 }
 
 func (m *mockStore) Save(_ context.Context, mem Memory, _ []float32) error { return m.err }
 func (m *mockStore) SaveText(_ context.Context, mem Memory) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.err != nil {
 		return m.err
 	}
 	m.saved = append(m.saved, mem)
 	return nil
+}
+
+func (m *mockStore) savedSnapshot() []Memory {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Memory, len(m.saved))
+	copy(out, m.saved)
+	return out
 }
 func (m *mockStore) Search(_ context.Context, _ string, _ []float32, _ int) ([]Memory, error) {
 	return nil, nil
@@ -74,10 +86,11 @@ func TestExtract_JSONArray_ReturnsTwoMemories(t *testing.T) {
 	ext2 := NewExtractor(llm, store2, "test-model")
 	ext2.ObserveAsync("user-1", "sess-1", "whatsapp", "I had a tough meeting", "That sounds hard.")
 	time.Sleep(100 * time.Millisecond)
-	if len(store2.saved) != 2 {
-		t.Errorf("store has %d saved memories, want 2", len(store2.saved))
+	saved2 := store2.savedSnapshot()
+	if len(saved2) != 2 {
+		t.Errorf("store has %d saved memories, want 2", len(saved2))
 	}
-	for _, m := range store2.saved {
+	for _, m := range saved2 {
 		if m.UserID != "user-1" {
 			t.Errorf("UserID = %q, want user-1", m.UserID)
 		}
@@ -120,7 +133,7 @@ func TestExtract_EmptyArray_NoMemoriesSaved(t *testing.T) {
 	ext2 := NewExtractor(llm, store, "test-model")
 	ext2.ObserveAsync("user-1", "sess-1", "whatsapp", "hi", "hello")
 	time.Sleep(100 * time.Millisecond)
-	if len(store.saved) != 0 {
-		t.Errorf("store has %d saved memories, want 0", len(store.saved))
+	if len(store.savedSnapshot()) != 0 {
+		t.Errorf("store has %d saved memories, want 0", len(store.savedSnapshot()))
 	}
 }
