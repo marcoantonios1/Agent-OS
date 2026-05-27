@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -18,6 +19,12 @@ import (
 // completed conversation turn. Implementations must not block the caller.
 type PersonalityObserver interface {
 	Observe(ctx context.Context, userID string, history []types.ConversationTurn) error
+}
+
+// EpisodicMemoryExtractor is the interface the Router uses to fire async memory
+// extraction after each completed turn.
+type EpisodicMemoryExtractor interface {
+	ObserveAsync(userID, sessionID, channel, userMsg, agentMsg string)
 }
 
 const unknownIntentReply = "I'm not sure how to help with that — could you rephrase or give me a bit more detail?"
@@ -63,6 +70,10 @@ type Router struct {
 	// ProfileObserver is optional. When set, it is called in a goroutine after
 	// each completed turn to extract and persist personality signals for the user.
 	ProfileObserver PersonalityObserver
+	// EpisodicExtractor is optional. When set, it is called asynchronously after
+	// each completed turn to extract and save episodic memories for the user.
+	// Only active when EPISODIC_MEMORY_ENABLED=true.
+	EpisodicExtractor EpisodicMemoryExtractor
 	// Personality is optional. When set, the user's PersonalityProfile is loaded
 	// on every dispatch and injected into AgentRequest.Metadata under
 	// "user.personality" so agents can adapt their tone without any per-agent code.
@@ -155,6 +166,7 @@ func (r *Router) Route(ctx context.Context, msg types.InboundMessage) (types.Out
 		r.log.WarnContext(ctx, "failed to persist turns", "session_id", msg.SessionID, "error", persistErr)
 	}
 	r.observePersonality(msg.UserID, history, agentResp.Output)
+	r.extractEpisodicMemory(msg.UserID, msg.SessionID, string(msg.ChannelID), msg.Text, agentResp.Output)
 
 	if dispatchErr != nil {
 		return types.OutboundMessage{}, fmt.Errorf("router: dispatch: %w", dispatchErr)
@@ -580,6 +592,20 @@ func (r *Router) observePersonality(userID string, history []types.ConversationT
 			r.log.Warn("profile observe failed", "user_id", userID, "error", err)
 		}
 	}()
+}
+
+// extractEpisodicMemory calls EpisodicExtractor.ObserveAsync when the extractor
+// is configured and EPISODIC_MEMORY_ENABLED is not "false".
+func (r *Router) extractEpisodicMemory(
+	userID, sessionID, channel, userMsg, agentMsg string,
+) {
+	if r.EpisodicExtractor == nil || userID == "" {
+		return
+	}
+	if os.Getenv("EPISODIC_MEMORY_ENABLED") == "false" {
+		return
+	}
+	r.EpisodicExtractor.ObserveAsync(userID, sessionID, channel, userMsg, agentMsg)
 }
 
 // maybeCompact runs context compaction on history when the router is configured
