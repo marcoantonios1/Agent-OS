@@ -30,6 +30,9 @@ type Memory struct {
 // Store is the interface for persisting and retrieving episodic memories.
 type Store interface {
 	Save(ctx context.Context, m Memory, embedding []float32) error
+	// SaveText embeds the memory's Content using the store's configured embed func,
+	// then calls Save. Convenience method for callers that don't hold embeddings.
+	SaveText(ctx context.Context, m Memory) error
 	Search(ctx context.Context, userID string, queryEmbedding []float32, k int) ([]Memory, error)
 	SearchByText(ctx context.Context, userID, query string, k int) ([]Memory, error)
 	Recent(ctx context.Context, userID string, k int) ([]Memory, error)
@@ -273,6 +276,19 @@ func (s *SQLiteStore) Prune(ctx context.Context, userID string, maxAge time.Dura
 		}
 	}
 	return nil
+}
+
+// SaveText embeds the memory's Content using the store's configured embed func,
+// then calls Save. Convenience method for callers that don't hold embeddings.
+func (s *SQLiteStore) SaveText(ctx context.Context, m Memory) error {
+	if s.embed == nil {
+		return fmt.Errorf("episodic: embed function not configured")
+	}
+	vec, err := s.embed(ctx, m.Content)
+	if err != nil {
+		return fmt.Errorf("episodic save text: embed: %w", err)
+	}
+	return s.Save(ctx, m, vec)
 }
 
 // compile-time interface check

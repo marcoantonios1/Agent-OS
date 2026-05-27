@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite" // registers the "sqlite" driver
+	_ "github.com/mattn/go-sqlite3" // registers the "sqlite3" CGO driver (required by sqlite-vec)
 
 	"github.com/marcoantonios1/Agent-OS/migrations"
 )
@@ -28,8 +28,8 @@ func OpenDB(path string) (*sql.DB, error) {
 
 	// WAL mode improves concurrent read throughput.
 	// busy_timeout lets writers wait instead of immediately erroring on a lock.
-	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)"
-	db, err := sql.Open("sqlite", dsn)
+	dsn := path + "?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=on"
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: open %s: %w", path, err)
 	}

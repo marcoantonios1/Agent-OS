@@ -1,5 +1,13 @@
 # ── Build stage ───────────────────────────────────────────────────────────────
-FROM golang:1.26-alpine AS builder
+# Use Debian-based image (not Alpine) so the CGO binary links against glibc,
+# matching the debian:bookworm-slim runtime stage. sqlite-vec requires CGO.
+FROM golang:1.26-bookworm AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libc6-dev \
+    libsqlite3-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
 
@@ -8,9 +16,11 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 # Copy source and build both binaries.
+# Both need CGO_ENABLED=1: memory.OpenDB uses mattn/go-sqlite3, and agentos
+# additionally loads sqlite-vec for vector search.
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/agentos  ./cmd/agentos
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/migrate  ./cmd/migrate
+RUN CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/agentos  ./cmd/agentos
+RUN CGO_ENABLED=1 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/migrate  ./cmd/migrate
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
@@ -22,6 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     ca-certificates \
     tzdata \
+    sqlite3 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
