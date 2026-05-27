@@ -31,6 +31,10 @@ func (m *seqLLM) Complete(_ context.Context, req costguard.CompletionRequest) (c
 	return resp, nil
 }
 
+func (m *seqLLM) Embed(_ context.Context, _ string) ([]float32, error) {
+	return nil, nil
+}
+
 func (m *seqLLM) Stream(_ context.Context, _ costguard.CompletionRequest) (<-chan costguard.StreamChunk, error) {
 	ch := make(chan costguard.StreamChunk)
 	close(ch)

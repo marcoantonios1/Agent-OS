@@ -24,6 +24,10 @@ func (m *mockLLM) Complete(_ context.Context, _ costguard.CompletionRequest) (co
 	return costguard.CompletionResponse{Content: m.content}, m.err
 }
 
+func (m *mockLLM) Embed(_ context.Context, _ string) ([]float32, error) {
+	return nil, nil
+}
+
 func (m *mockLLM) Stream(_ context.Context, _ costguard.CompletionRequest) (<-chan costguard.StreamChunk, error) {
 	ch := make(chan costguard.StreamChunk, 1)
 	ch <- costguard.StreamChunk{Content: m.content, Done: true}

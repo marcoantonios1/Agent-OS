@@ -36,6 +36,10 @@ func (r *recordingLLM) Complete(_ context.Context, req costguard.CompletionReque
 	return resp, nil
 }
 
+func (r *recordingLLM) Embed(_ context.Context, _ string) ([]float32, error) {
+	return nil, nil
+}
+
 func (r *recordingLLM) Stream(_ context.Context, req costguard.CompletionRequest) (<-chan costguard.StreamChunk, error) {
 	r.mu.Lock()
 	r.streamCalls = append(r.streamCalls, req.Model)

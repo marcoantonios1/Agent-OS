@@ -149,6 +149,17 @@ type oaiStreamDelta struct {
 	} `json:"choices"`
 }
 
+type oaiEmbeddingRequest struct {
+	Model string `json:"model"`
+	Input string `json:"input"`
+}
+
+type oaiEmbeddingResponse struct {
+	Data []struct {
+		Embedding []float32 `json:"embedding"`
+	} `json:"data"`
+}
+
 // ── Complete ──────────────────────────────────────────────────────────────────
 
 // Complete performs a single-shot completion with up to maxAttempts retries.
@@ -296,6 +307,37 @@ func (c *Client) Stream(ctx context.Context, req CompletionRequest) (<-chan Stre
 	return ch, nil
 }
 
+// ── Embed ─────────────────────────────────────────────────────────────────────
+
+// Embed returns a vector embedding for text. The model is empty so the
+// Costguard gateway uses its own EMBEDDING_MODEL configuration.
+func (c *Client) Embed(ctx context.Context, text string) ([]float32, error) {
+	body := oaiEmbeddingRequest{
+		Model: "", // empty — Costguard reads EMBEDDING_MODEL from its own config
+		Input: text,
+	}
+	resp, err := c.doPost(ctx, "/v1/embeddings", body)
+	if err != nil {
+		return nil, fmt.Errorf("costguard: embed request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("costguard: embed unexpected status %d", resp.StatusCode)
+	}
+	rawBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("costguard: embed read body: %w", err)
+	}
+	var apiResp oaiEmbeddingResponse
+	if err := json.Unmarshal(rawBody, &apiResp); err != nil {
+		return nil, fmt.Errorf("costguard: embed decode: %w", err)
+	}
+	if len(apiResp.Data) == 0 {
+		return nil, fmt.Errorf("costguard: embed response has no data")
+	}
+	return apiResp.Data[0].Embedding, nil
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func (c *Client) buildRequest(req CompletionRequest, stream bool) oaiRequest {
@@ -375,13 +417,13 @@ func toOAIMessage(t types.ConversationTurn) json.RawMessage {
 	return raw
 }
 
-func (c *Client) doPost(ctx context.Context, path string, body oaiRequest) (*http.Response, error) {
+func (c *Client) doPost(ctx context.Context, path string, body any) (*http.Response, error) {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	c.log.InfoContext(ctx, "costguard request", "path", path, "model", body.Model)
+	c.log.InfoContext(ctx, "costguard request", "path", path)
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(data))
 	if err != nil {

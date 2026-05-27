@@ -16,6 +16,9 @@ type LLMClient interface {
 	// Stream performs a streaming completion and returns a channel of chunks.
 	// The channel is closed when the stream ends or the context is cancelled.
 	Stream(ctx context.Context, req CompletionRequest) (<-chan StreamChunk, error)
+	// Embed returns a vector embedding for the given text. The model is
+	// determined by the Costguard gateway's EMBEDDING_MODEL configuration.
+	Embed(ctx context.Context, text string) ([]float32, error)
 }
 
 // CompletionRequest is the input to a single LLM call.

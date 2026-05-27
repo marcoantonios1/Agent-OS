@@ -35,6 +35,10 @@ func (f *fakeLLM) Complete(_ context.Context, req costguard.CompletionRequest) (
 	return r, nil
 }
 
+func (f *fakeLLM) Embed(_ context.Context, _ string) ([]float32, error) {
+	return nil, nil
+}
+
 func (f *fakeLLM) Stream(_ context.Context, _ costguard.CompletionRequest) (<-chan costguard.StreamChunk, error) {
 	ch := make(chan costguard.StreamChunk, 1)
 	ch <- costguard.StreamChunk{Content: "streamed", Done: true}

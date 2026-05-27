@@ -62,6 +62,10 @@ func (s *scriptedLLM) Complete(_ context.Context, req costguard.CompletionReques
 	return resp, nil
 }
 
+func (s *scriptedLLM) Embed(_ context.Context, _ string) ([]float32, error) {
+	return nil, nil
+}
+
 func (s *scriptedLLM) Stream(_ context.Context, _ costguard.CompletionRequest) (<-chan costguard.StreamChunk, error) {
 	s.mu.Lock()
 	idx := s.streamIdx
