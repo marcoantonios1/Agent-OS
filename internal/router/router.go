@@ -421,6 +421,7 @@ func (r *Router) RouteStream(ctx context.Context, msg types.InboundMessage) (<-c
 						"session_id", msg.SessionID, "error", err)
 				}
 				r.observePersonality(msg.UserID, history, sb.String())
+				r.extractEpisodicMemory(msg.UserID, msg.SessionID, string(msg.ChannelID), msg.Text, sb.String())
 				return
 			}
 		}
@@ -428,6 +429,7 @@ func (r *Router) RouteStream(ctx context.Context, msg types.InboundMessage) (<-c
 			r.log.WarnContext(ctx, "failed to persist turns", "session_id", msg.SessionID, "error", err)
 		}
 		r.observePersonality(msg.UserID, history, sb.String())
+		r.extractEpisodicMemory(msg.UserID, msg.SessionID, string(msg.ChannelID), msg.Text, sb.String())
 	}()
 
 	return out, nil

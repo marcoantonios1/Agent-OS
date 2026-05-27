@@ -72,6 +72,7 @@ func main() {
 	var userStore sessions.UserStore
 	var reminderStore sessions.ReminderStore
 	var personalityStore sessions.PersonalityStore
+	var episodicExtractor *episodic.Extractor
 	sqlite_vec.Auto()
 	if cfg.SQLiteConfigured() {
 		db, err := memory.OpenDB(cfg.SQLitePath)
@@ -92,7 +93,12 @@ func main() {
 			slog.Error("episodic: failed to create store", "error", err)
 			os.Exit(1)
 		}
-		_ = episodicStore // wire into agents/router as needed in subsequent issues
+
+		extractorModel := cfg.ClassifierModel
+		if m := os.Getenv("EPISODIC_EXTRACTOR_MODEL"); m != "" {
+			extractorModel = m
+		}
+		episodicExtractor = episodic.NewExtractor(llm, episodicStore, extractorModel)
 
 		slog.Info("using SQLite persistence", "path", cfg.SQLitePath)
 	} else {
@@ -158,6 +164,7 @@ func main() {
 	r.Users = userStore
 	r.BuilderNotifier = web.ReminderNotifier{} // web: logs only; Discord overrides below
 	r.ProfileObserver = profile.New(llm, personalityStore, cfg.ProfileModel)
+	r.EpisodicExtractor = episodicExtractor
 	r.Personality = personalityStore
 	r.CompactionLLM = llm
 	r.CompactionModel = cfg.ClassifierModel
