@@ -33,6 +33,10 @@ func (m *seqLLM) Complete(_ context.Context, _ costguard.CompletionRequest) (cos
 	return resp, nil
 }
 
+func (m *seqLLM) Embed(_ context.Context, _ string) ([]float32, error) {
+	return nil, nil
+}
+
 func (m *seqLLM) Stream(_ context.Context, _ costguard.CompletionRequest) (<-chan costguard.StreamChunk, error) {
 	ch := make(chan costguard.StreamChunk)
 	close(ch)
@@ -450,6 +454,10 @@ func (l *toolCapturingLLM) Complete(_ context.Context, req costguard.CompletionR
 	return costguard.CompletionResponse{Content: l.reply}, nil
 }
 
+func (l *toolCapturingLLM) Embed(_ context.Context, _ string) ([]float32, error) {
+	return nil, nil
+}
+
 func (l *toolCapturingLLM) Stream(_ context.Context, _ costguard.CompletionRequest) (<-chan costguard.StreamChunk, error) {
 	ch := make(chan costguard.StreamChunk)
 	close(ch)
@@ -466,6 +474,10 @@ type capturingLLM struct {
 func (c *capturingLLM) Complete(_ context.Context, req costguard.CompletionRequest) (costguard.CompletionResponse, error) {
 	c.capture(req.Messages)
 	return costguard.CompletionResponse{Content: c.reply}, nil
+}
+
+func (c *capturingLLM) Embed(_ context.Context, _ string) ([]float32, error) {
+	return nil, nil
 }
 
 func (c *capturingLLM) Stream(_ context.Context, _ costguard.CompletionRequest) (<-chan costguard.StreamChunk, error) {
@@ -487,6 +499,10 @@ func (r *recordingLLM) Complete(_ context.Context, req costguard.CompletionReque
 		r.idx++
 	}
 	return resp, nil
+}
+
+func (r *recordingLLM) Embed(_ context.Context, _ string) ([]float32, error) {
+	return nil, nil
 }
 
 func (r *recordingLLM) Stream(_ context.Context, _ costguard.CompletionRequest) (<-chan costguard.StreamChunk, error) {

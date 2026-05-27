@@ -186,6 +186,10 @@ func (c *capturingScriptedLLM) Complete(_ context.Context, req costguard.Complet
 	return resp, nil
 }
 
+func (c *capturingScriptedLLM) Embed(_ context.Context, _ string) ([]float32, error) {
+	return nil, nil
+}
+
 func (c *capturingScriptedLLM) Stream(_ context.Context, _ costguard.CompletionRequest) (<-chan costguard.StreamChunk, error) {
 	ch := make(chan costguard.StreamChunk)
 	close(ch)

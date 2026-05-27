@@ -21,6 +21,10 @@ func (s *stubLLM) Complete(_ context.Context, _ costguard.CompletionRequest) (co
 	return costguard.CompletionResponse{Content: s.summary}, nil
 }
 
+func (s *stubLLM) Embed(_ context.Context, _ string) ([]float32, error) {
+	return nil, nil
+}
+
 func (s *stubLLM) Stream(_ context.Context, _ costguard.CompletionRequest) (<-chan costguard.StreamChunk, error) {
 	ch := make(chan costguard.StreamChunk, 1)
 	ch <- costguard.StreamChunk{Content: s.summary, Done: true}
@@ -30,6 +34,10 @@ func (s *stubLLM) Stream(_ context.Context, _ costguard.CompletionRequest) (<-ch
 
 // errorLLM always returns an error.
 type errorLLM struct{}
+
+func (e *errorLLM) Embed(_ context.Context, _ string) ([]float32, error) {
+	return nil, nil
+}
 
 func (e *errorLLM) Complete(_ context.Context, _ costguard.CompletionRequest) (costguard.CompletionResponse, error) {
 	return costguard.CompletionResponse{}, fmt.Errorf("llm error")
