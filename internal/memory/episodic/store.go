@@ -47,7 +47,11 @@ type SQLiteStore struct {
 
 // NewSQLiteStore returns a SQLiteStore using the provided *sql.DB and embed function.
 // The embed function is used by SearchByText to convert text queries to vectors.
-// The database must already have the episodic_memories tables (see RunMigrations).
+//
+// The database must already have the episodic_memories table created by migration
+// 005_episodic_memory.sql. This constructor also creates the vec0 virtual table
+// (episodic_memories_vec) if it does not already exist; sqlite_vec.Auto() must
+// therefore have been called before opening the DB connection.
 func NewSQLiteStore(
 	db *sql.DB,
 	embed func(ctx context.Context, text string) ([]float32, error),
@@ -58,6 +62,17 @@ func NewSQLiteStore(
 			dims = n
 		}
 	}
+
+	// Create the vec0 virtual table now that sqlite-vec is loaded.
+	// The dimension string is built dynamically so it respects EMBEDDING_DIMENSIONS.
+	ddl := fmt.Sprintf(`CREATE VIRTUAL TABLE IF NOT EXISTS episodic_memories_vec USING vec0(
+		memory_id TEXT PRIMARY KEY,
+		embedding float[%d]
+	)`, dims)
+	if _, err := db.Exec(ddl); err != nil {
+		return nil, fmt.Errorf("episodic: create vec0 table: %w", err)
+	}
+
 	return &SQLiteStore{db: db, embed: embed, dims: dims}, nil
 }
 

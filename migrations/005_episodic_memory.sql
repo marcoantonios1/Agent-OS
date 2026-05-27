@@ -12,12 +12,10 @@ CREATE TABLE IF NOT EXISTS episodic_memories (
     access_count     INTEGER NOT NULL DEFAULT 0
 );
 
--- sqlite-vec virtual table for semantic similarity search
--- Dimension must match EMBEDDING_DIMENSIONS env var (default 768)
-CREATE VIRTUAL TABLE IF NOT EXISTS episodic_memories_vec USING vec0(
-    memory_id TEXT PRIMARY KEY,
-    embedding float[768]
-);
+-- NOTE: The sqlite-vec virtual table (episodic_memories_vec) is created at
+-- runtime by internal/memory/episodic.NewSQLiteStore after sqlite_vec.Auto()
+-- has registered the vec0 module. It cannot be created in a migration because
+-- the vec0 module is only available when the CGO sqlite-vec extension is loaded.
 
 CREATE INDEX IF NOT EXISTS idx_episodic_memories_user
     ON episodic_memories(user_id, created_at DESC);
