@@ -73,6 +73,7 @@ func main() {
 	var reminderStore sessions.ReminderStore
 	var personalityStore sessions.PersonalityStore
 	var episodicExtractor *episodic.Extractor
+	var episodicStoreForRouter *episodic.SQLiteStore
 	sqlite_vec.Auto()
 	if cfg.SQLiteConfigured() {
 		db, err := memory.OpenDB(cfg.SQLitePath)
@@ -99,6 +100,7 @@ func main() {
 			extractorModel = m
 		}
 		episodicExtractor = episodic.NewExtractor(llm, episodicStore, extractorModel)
+		episodicStoreForRouter = episodicStore
 
 		slog.Info("using SQLite persistence", "path", cfg.SQLitePath)
 	} else {
@@ -165,6 +167,7 @@ func main() {
 	r.BuilderNotifier = web.ReminderNotifier{} // web: logs only; Discord overrides below
 	r.ProfileObserver = profile.New(llm, personalityStore, cfg.ProfileModel)
 	r.EpisodicExtractor = episodicExtractor
+	r.EpisodicStore = episodicStoreForRouter
 	r.Personality = personalityStore
 	r.CompactionLLM = llm
 	r.CompactionModel = cfg.ClassifierModel

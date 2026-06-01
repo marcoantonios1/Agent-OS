@@ -175,6 +175,10 @@ func (a *Agent) buildDynamicPrompt(req types.AgentRequest) string {
 		}
 	}
 
+	if block := req.Metadata["user.episodic_memories"]; block != "" {
+		sb.WriteString(block)
+	}
+
 	now := time.Now()
 	sb.WriteString("\n\n## Current time\nLocal date/time (use this UTC offset for ALL calendar timestamps): ")
 	sb.WriteString(now.Format(time.RFC3339))

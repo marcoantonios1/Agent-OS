@@ -11,6 +11,7 @@ import (
 
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
+	"github.com/marcoantonios1/Agent-OS/internal/memory/episodic"
 	"github.com/marcoantonios1/Agent-OS/internal/sessions"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 )
@@ -25,6 +26,12 @@ type PersonalityObserver interface {
 // extraction after each completed turn.
 type EpisodicMemoryExtractor interface {
 	ObserveAsync(userID, sessionID, channel, userMsg, agentMsg string)
+}
+
+// EpisodicMemorySearcher is the subset of episodic.Store the router needs
+// for pre-dispatch memory injection.
+type EpisodicMemorySearcher interface {
+	SearchByText(ctx context.Context, userID, query string, k int) ([]episodic.Memory, error)
 }
 
 const unknownIntentReply = "I'm not sure how to help with that — could you rephrase or give me a bit more detail?"
@@ -74,6 +81,10 @@ type Router struct {
 	// each completed turn to extract and save episodic memories for the user.
 	// Only active when EPISODIC_MEMORY_ENABLED=true.
 	EpisodicExtractor EpisodicMemoryExtractor
+	// EpisodicStore is optional. When set, the router searches for memories
+	// relevant to the current user message before each dispatch and injects
+	// them into AgentRequest.Metadata["user.episodic_memories"].
+	EpisodicStore EpisodicMemorySearcher
 	// Personality is optional. When set, the user's PersonalityProfile is loaded
 	// on every dispatch and injected into AgentRequest.Metadata under
 	// "user.personality" so agents can adapt their tone without any per-agent code.
@@ -314,6 +325,7 @@ func (r *Router) dispatch(
 			}
 		}
 	}
+	r.injectEpisodicMemories(ctx, agentMeta, msg.UserID, msg.Text)
 
 	start := time.Now()
 	resp, err := agent.Handle(ctx, types.AgentRequest{
@@ -473,6 +485,7 @@ func (r *Router) streamDispatch(
 			}
 		}
 	}
+	r.injectEpisodicMemories(ctx, agentMeta, msg.UserID, msg.Text)
 
 	req := types.AgentRequest{
 		SessionID: msg.SessionID,
@@ -594,6 +607,81 @@ func (r *Router) observePersonality(userID string, history []types.ConversationT
 			r.log.Warn("profile observe failed", "user_id", userID, "error", err)
 		}
 	}()
+}
+
+const episodicDistanceThreshold = 0.8
+
+func buildMemoryContext(memories []episodic.Memory) string {
+	if len(memories) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("\n\n## Relevant memories from past conversations\n")
+	now := time.Now()
+	for _, m := range memories {
+		age := now.Sub(m.CreatedAt)
+		sb.WriteString("\n- [")
+		sb.WriteString(formatAge(age))
+		sb.WriteString("] ")
+		sb.WriteString(m.Content)
+	}
+	return sb.String()
+}
+
+func formatAge(d time.Duration) string {
+	days := int(d.Hours() / 24)
+	switch {
+	case days < 1:
+		return "today"
+	case days == 1:
+		return "1 day ago"
+	case days < 7:
+		return fmt.Sprintf("%d days ago", days)
+	case days < 14:
+		return "1 week ago"
+	case days < 30:
+		return fmt.Sprintf("%d weeks ago", days/7)
+	case days < 60:
+		return "1 month ago"
+	default:
+		return fmt.Sprintf("%d months ago", days/30)
+	}
+}
+
+// injectEpisodicMemories searches for memories relevant to the current user
+// message and injects them into meta["user.episodic_memories"] when found.
+// No-ops when EpisodicStore is nil, userID is empty, or the message is too short.
+func (r *Router) injectEpisodicMemories(
+	ctx context.Context,
+	meta map[string]string,
+	userID, userMsg string,
+) {
+	if r.EpisodicStore == nil || userID == "" {
+		return
+	}
+	if len(strings.Fields(userMsg)) < 3 {
+		return
+	}
+
+	const defaultK = 5
+	memories, err := r.EpisodicStore.SearchByText(ctx, userID, userMsg, defaultK)
+	if err != nil {
+		r.log.WarnContext(ctx, "episodic: memory search failed",
+			"user_id", userID, "error", err)
+		return
+	}
+
+	filtered := memories[:0]
+	for _, m := range memories {
+		if m.Distance < episodicDistanceThreshold {
+			filtered = append(filtered, m)
+		}
+	}
+
+	block := buildMemoryContext(filtered)
+	if block != "" {
+		meta["user.episodic_memories"] = block
+	}
 }
 
 // extractEpisodicMemory calls EpisodicExtractor.ObserveAsync when the extractor
