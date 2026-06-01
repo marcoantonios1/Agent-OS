@@ -270,6 +270,7 @@ func newStack(cfg stackConfig) *testStack {
 		cfg.emailProv, cfg.calProv, searchProv,
 		approvals, userStore, reminderStore, projectStore, store,
 		builderCfg,
+		nil,
 	)
 	builderReg := buildBuilderRegistry(builderCfg, projectStore, store)
 	reviewerReg := buildReviewerRegistry(builderCfg)

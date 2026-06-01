@@ -23,3 +23,6 @@ skills:
   - reminder_list
   - user_profile_read
   - user_profile_update
+  - memory_save
+  - memory_search
+  - memory_forget

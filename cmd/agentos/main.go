@@ -118,6 +118,10 @@ func main() {
 	builderCfg := newBuilderConfig(cfg)
 
 	// Build the global registry once. Every agent gets a subset of this registry.
+	var episodicStoreIface episodic.Store
+	if episodicStoreForRouter != nil {
+		episodicStoreIface = episodicStoreForRouter
+	}
 	globalRegistry := skills.NewGlobalRegistry(
 		newEmailProvider(ctx, cfg),
 		newCalendarProvider(ctx, cfg),
@@ -128,6 +132,7 @@ func main() {
 		projectStore,
 		store,
 		builderCfg,
+		episodicStoreIface,
 	)
 	community.RegisterAll(globalRegistry)
 
