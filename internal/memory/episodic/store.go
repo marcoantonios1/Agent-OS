@@ -25,6 +25,7 @@ type Memory struct {
 	CreatedAt      time.Time
 	LastAccessedAt *time.Time
 	AccessCount    int
+	Distance float32 // populated by Search; 0 when not from a search result
 }
 
 // Store is the interface for persisting and retrieving episodic memories.
@@ -127,7 +128,8 @@ func (s *SQLiteStore) Search(ctx context.Context, userID string, queryEmbedding 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT
 			m.id, m.user_id, m.channel, m.session_id, m.content,
-			m.source, m.importance, m.created_at, m.last_accessed_at, m.access_count
+			m.source, m.importance, m.created_at, m.last_accessed_at, m.access_count,
+			v.distance
 		FROM episodic_memories_vec v
 		JOIN episodic_memories m ON m.id = v.memory_id
 		WHERE v.embedding MATCH ?
@@ -150,6 +152,7 @@ func (s *SQLiteStore) Search(ctx context.Context, userID string, queryEmbedding 
 		if err := rows.Scan(
 			&mem.ID, &mem.UserID, &mem.Channel, &mem.SessionID, &mem.Content,
 			&mem.Source, &mem.Importance, &mem.CreatedAt, &lastAccessed, &mem.AccessCount,
+			&mem.Distance,
 		); err != nil {
 			return nil, fmt.Errorf("episodic search: scan: %w", err)
 		}
