@@ -221,6 +221,7 @@ func TestPhase4b_DoctorAgent_RoutesCorrectly(t *testing.T) {
 		nil, nil, &mockSearchProvider{},
 		approvals, memory.NewUserStore(), memory.NewReminderStore(),
 		memory.NewProjectStore(), store, code.Config{},
+		nil,
 	)
 
 	// Load the doctor agent.

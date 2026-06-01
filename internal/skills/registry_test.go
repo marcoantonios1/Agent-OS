@@ -87,6 +87,7 @@ func buildRegistry(
 		memory.NewProjectStore(),
 		memory.NewStore(),
 		code.Config{SandboxDir: "/tmp"},
+		nil,
 	)
 }
 

@@ -6,11 +6,13 @@ package skills
 
 import (
 	"github.com/marcoantonios1/Agent-OS/internal/approval"
+	"github.com/marcoantonios1/Agent-OS/internal/memory/episodic"
 	"github.com/marcoantonios1/Agent-OS/internal/sessions"
 	"github.com/marcoantonios1/Agent-OS/internal/tools"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/calendar"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/code"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/email"
+	memorytool "github.com/marcoantonios1/Agent-OS/internal/tools/memory"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/project"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/reminder"
 	"github.com/marcoantonios1/Agent-OS/internal/tools/userprofile"
@@ -39,6 +41,7 @@ func NewGlobalRegistry(
 	projects sessions.ProjectStore,
 	sessionStore sessions.SessionStore,
 	sandboxCfg code.Config,
+	episodicStore episodic.Store,
 ) *tools.ToolRegistry {
 	reg := tools.NewRegistry()
 
@@ -82,6 +85,13 @@ func NewGlobalRegistry(
 	if searchProv != nil {
 		searchReg := websearch.NewWebSearchRegistry(searchProv)
 		reg.MergeFrom(searchReg)
+	}
+
+	// ── conditional: episodic memory ──────────────────────────────────────────
+	if episodicStore != nil {
+		reg.Register(memorytool.NewSaveTool(episodicStore))
+		reg.Register(memorytool.NewSearchTool(episodicStore))
+		reg.Register(memorytool.NewForgetTool(episodicStore))
 	}
 
 	return reg

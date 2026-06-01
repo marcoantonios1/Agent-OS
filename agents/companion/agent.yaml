@@ -9,3 +9,6 @@ intents:
   - vent
 skills:
   - user_profile_read
+  - memory_save
+  - memory_search
+  - memory_forget
