@@ -387,6 +387,11 @@ test/
 | **6** | Video support on Telegram, WhatsApp, and Slack — size gate, graceful ffmpeg fallback | ✓ |
 | **6** | Classifier multimodal fix — strips image Parts before sending to non-vision classifier model | ✓ |
 | **6** | Doctor agent image analysis — MRI, X-ray, ultrasound, lab result interpretation | ✓ |
+| **7** | Episodic memory — vector-backed long-term memory (sqlite-vec), extraction from transcripts, injection into agent system prompts | ✓ |
+| **7** | Inbox monitor — background worker polling email on a configurable interval, LLM triage with episodic deduplication, WhatsApp/Discord notification | ✓ |
+| **7** | Calendar monitor — pre-event briefs enriched with episodic context about attendees, deduplication so each event is briefed exactly once | ✓ |
+| **7** | Project monitor — stale/blocked/deadline alerts for Builder projects, episodic dedup, configurable staleness window | ✓ |
+| **7** | Memory tools — `memory_save` and `memory_search` tools exposed to agents for explicit long-term memory management | ✓ |
 
 ---
 
