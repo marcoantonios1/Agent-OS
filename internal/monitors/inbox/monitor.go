@@ -228,8 +228,21 @@ func (m *Monitor) filterAlreadyNotified(ctx context.Context, emails []email.Emai
 
 // triageEmails calls the LLM with the triage prompt and returns the subset of
 // emails identified as important. IDs not found in emails are silently ignored.
+//
+// Emails are given short aliases (e1, e2, …) in the prompt so the LLM only
+// needs to output small tokens rather than echoing long Outlook/Gmail IDs.
 func (m *Monitor) triageEmails(ctx context.Context, emails []email.EmailSummary) ([]email.EmailSummary, error) {
-	emailList := formatEmailListForPrompt(emails)
+	// Assign short aliases so the LLM outputs "e1" not a 150-char Outlook ID.
+	aliased := make([]email.EmailSummary, len(emails))
+	aliasToEmail := make(map[string]email.EmailSummary, len(emails))
+	for i, e := range emails {
+		alias := fmt.Sprintf("e%d", i+1)
+		aliased[i] = e
+		aliased[i].ID = alias
+		aliasToEmail[alias] = e
+	}
+
+	emailList := formatEmailListForPrompt(aliased)
 	prompt := strings.ReplaceAll(triagePrompt, "{email_list}", emailList)
 
 	resp, err := m.llm.Complete(ctx, costguard.CompletionRequest{
@@ -242,35 +255,28 @@ func (m *Monitor) triageEmails(ctx context.Context, emails []email.EmailSummary)
 	if err != nil {
 		return nil, fmt.Errorf("triage: llm: %w", err)
 	}
-
-	raw := strings.TrimSpace(resp.Content)
-	// Strip markdown fences if present.
-	if strings.HasPrefix(raw, "```") {
-		if idx := strings.Index(raw, "\n"); idx >= 0 {
-			raw = raw[idx+1:]
-		}
-		if idx := strings.LastIndex(raw, "```"); idx >= 0 {
-			raw = raw[:idx]
-		}
-		raw = strings.TrimSpace(raw)
+	if resp.Content == "" {
+		return nil, fmt.Errorf("triage: llm returned empty content (model may be a thinking model that exhausted its token budget before outputting JSON — try a smaller non-thinking model)")
 	}
 
-	var importantIDs []string
-	if err := json.Unmarshal([]byte(raw), &importantIDs); err != nil {
+	raw := resp.Content
+	// Extract the first [...] array from anywhere in the response —
+	// models often output reasoning text before the JSON.
+	if start := strings.Index(raw, "["); start >= 0 {
+		if end := strings.LastIndex(raw, "]"); end >= start {
+			raw = raw[start : end+1]
+		}
+	}
+	raw = strings.TrimSpace(raw)
+
+	var importantAliases []string
+	if err := json.Unmarshal([]byte(raw), &importantAliases); err != nil {
 		return nil, fmt.Errorf("triage: parse json %q: %w", raw, err)
 	}
-	if len(importantIDs) == 0 {
-		return nil, nil
-	}
 
-	// Build a lookup map for O(1) membership test.
-	idSet := make(map[string]bool, len(importantIDs))
-	for _, id := range importantIDs {
-		idSet[id] = true
-	}
 	var important []email.EmailSummary
-	for _, e := range emails {
-		if idSet[e.ID] {
+	for _, alias := range importantAliases {
+		if e, ok := aliasToEmail[alias]; ok {
 			important = append(important, e)
 		}
 	}
@@ -319,11 +325,13 @@ func deduplicationKey(e email.EmailSummary) string {
 }
 
 // formatEmailListForPrompt serialises a list of EmailSummary for the triage prompt.
+// Date is omitted and snippets are truncated to keep prompt tokens small.
 func formatEmailListForPrompt(emails []email.EmailSummary) string {
 	var sb strings.Builder
 	for _, e := range emails {
-		sb.WriteString(fmt.Sprintf("ID: %s | From: %s | Subject: %s | Date: %s | Snippet: %s\n",
-			e.ID, e.From, e.Subject, e.Date.Format(time.RFC3339), e.Snippet))
+		snippet := truncate(e.Snippet, 60)
+		sb.WriteString(fmt.Sprintf("ID:%s From:%s Subject:%s Snippet:%s\n",
+			e.ID, e.From, e.Subject, snippet))
 	}
 	return sb.String()
 }
@@ -358,22 +366,14 @@ func truncate(s string, n int) string {
 	return string(runes[:n]) + "…"
 }
 
-const triagePrompt = `You are an email triage assistant. Given these emails, identify which ones genuinely need the user's attention right now.
+const triagePrompt = `You are an email triage assistant. Identify which emails need the user's attention.
 
-Flag an email if it:
-- Requires a decision or response within 48 hours
-- Is from a person the user frequently communicates with
-- Contains a deadline, meeting request, or action item
-- Seems urgent based on subject or sender
-
-Do NOT flag:
-- Marketing emails or newsletters
-- Automated notifications (GitHub, Jira, etc.) unless they contain failures
-- Emails already replied to
-- FYI emails that require no action
-
-Return only a JSON array of the email IDs that need attention.
-Return [] if nothing is important.
+Flag if: requires response/decision within 48h, contains deadline/meeting/action item, seems urgent.
+Do NOT flag: newsletters, automated notifications (unless failures), FYI-only emails.
 
 Emails:
-{email_list}`
+{email_list}
+
+Output ONLY a raw JSON array of important email IDs. No explanation, no markdown, no preamble.
+Example: ["id1","id2"]
+If nothing is important: []`
