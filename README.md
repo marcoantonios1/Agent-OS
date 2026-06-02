@@ -282,6 +282,67 @@ Long sessions are automatically summarised when estimated token count exceeds th
 
 ---
 
+## Episodic memory
+
+After each conversation the router extracts memorable facts (people, preferences, decisions, events) and saves them as vector embeddings in SQLite. On the next message, the router searches for relevant memories and injects them into the agent's system prompt under `## Relevant memories from past conversations`.
+
+This gives agents long-term recall across sessions without ever summarising or compressing history — each memory is a discrete, searchable fact.
+
+```
+## Relevant memories from past conversations
+- Alice tends to push back on large budget line items
+- User prefers morning stand-ups over afternoon ones
+- API deployment went live on Tuesday with zero incidents
+```
+
+Requires `SQLITE_PATH` to be set. Enable by wiring an embedding model in Costguard. Memory injection is on by default; set `EPISODIC_MEMORY_ENABLED=false` to disable.
+
+---
+
+## Proactive monitors
+
+Three background workers run on configurable intervals and push notifications to WhatsApp or Discord without you having to ask.
+
+### Inbox monitor
+
+Polls your email inbox, uses an LLM to triage important emails (requires response, contains deadline, from frequent contacts), and delivers a summary. Episodic memory ensures each email is surfaced at most once — no duplicate notifications across restarts.
+
+```bash
+INBOX_MONITOR_ENABLED=true
+INBOX_MONITOR_USER_ID=96170123456@s.whatsapp.net
+INBOX_MONITOR_CHANNEL=whatsapp
+INBOX_MONITOR_INTERVAL=15m
+INBOX_MONITOR_MODEL=llama3.2:3b   # use a non-thinking model
+```
+
+### Calendar monitor
+
+Scans your calendar and sends enriched event briefs before meetings start. The brief includes attendees, duration, location, and relevant context pulled from episodic memory ("Alice tends to push back on budget items"). Each event is briefed exactly once.
+
+```bash
+CALENDAR_MONITOR_ENABLED=true
+CALENDAR_MONITOR_USER_ID=96170123456@s.whatsapp.net
+CALENDAR_MONITOR_CHANNEL=whatsapp
+CALENDAR_MONITOR_INTERVAL=1h
+CALENDAR_MONITOR_BRIEF_BEFORE=30m   # send brief 30 minutes before start
+```
+
+### Project monitor
+
+Scans active Builder projects and fires alerts when a project goes stale (no activity for N days), enters the `blocked` phase, or has a milestone deadline approaching within 48 hours. Episodic dedup prevents re-alerting on the same condition.
+
+```bash
+PROJECT_MONITOR_ENABLED=true
+PROJECT_MONITOR_USER_ID=96170123456@s.whatsapp.net
+PROJECT_MONITOR_CHANNEL=whatsapp
+PROJECT_MONITOR_INTERVAL=6h
+PROJECT_MONITOR_STALE_AFTER=3d
+```
+
+Milestone deadlines: add entries in the format `"Milestone name — 2026-07-01"` to a project's milestones list via the Builder agent.
+
+---
+
 ## Makefile
 
 | Target | What it does |
