@@ -26,6 +26,7 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
 	"github.com/marcoantonios1/Agent-OS/internal/voice"
 	"github.com/marcoantonios1/Agent-OS/internal/heartbeat"
+	calendarmonitor "github.com/marcoantonios1/Agent-OS/internal/monitors/calendar"
 	"github.com/marcoantonios1/Agent-OS/internal/monitors/inbox"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/whatsApp"
@@ -124,9 +125,10 @@ func main() {
 		episodicStoreIface = episodicStoreForRouter
 	}
 	emailProvider := newEmailProvider(ctx, cfg)
+	calendarProvider := newCalendarProvider(ctx, cfg)
 	globalRegistry := skills.NewGlobalRegistry(
 		emailProvider,
-		newCalendarProvider(ctx, cfg),
+		calendarProvider,
 		newSearchProvider(cfg),
 		approvals,
 		userStore,
@@ -374,6 +376,31 @@ func main() {
 			go monitor.Run(ctx)
 		} else {
 			slog.Warn("inbox monitor: no notifier available for channel", "channel", inboxCfg.Channel)
+		}
+	}
+
+	// ── calendar monitor ──────────────────────────────────────────────────────────
+	calMonCfg := calendarmonitor.ConfigFromEnv()
+	if calMonCfg.Interval > 0 && calMonCfg.UserID != "" && calendarProvider != nil && episodicStoreIface != nil {
+		var calNotifier calendarmonitor.Notifier
+		switch calMonCfg.Channel {
+		case "whatsapp":
+			if whatsAppHandler != nil {
+				calNotifier = whatsAppHandler
+			}
+		case "discord":
+			if discordHandler != nil {
+				calNotifier = discordHandler
+			}
+		default:
+			calNotifier = web.ReminderNotifier{}
+		}
+
+		if calNotifier != nil {
+			calMon := calendarmonitor.New(calMonCfg, calendarProvider, llm, episodicStoreIface, calNotifier)
+			go calMon.Run(ctx)
+		} else {
+			slog.Warn("calendar monitor: no notifier available for channel", "channel", calMonCfg.Channel)
 		}
 	}
 
