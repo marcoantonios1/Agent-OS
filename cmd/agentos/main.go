@@ -28,6 +28,7 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/heartbeat"
 	calendarmonitor "github.com/marcoantonios1/Agent-OS/internal/monitors/calendar"
 	"github.com/marcoantonios1/Agent-OS/internal/monitors/inbox"
+	projectmonitor "github.com/marcoantonios1/Agent-OS/internal/monitors/project"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/whatsApp"
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
@@ -401,6 +402,31 @@ func main() {
 			go calMon.Run(ctx)
 		} else {
 			slog.Warn("calendar monitor: no notifier available for channel", "channel", calMonCfg.Channel)
+		}
+	}
+
+	// ── project monitor ───────────────────────────────────────────────────────────
+	projMonCfg := projectmonitor.ConfigFromEnv()
+	if projMonCfg.Interval > 0 && projMonCfg.UserID != "" && episodicStoreIface != nil {
+		var projNotifier projectmonitor.Notifier
+		switch projMonCfg.Channel {
+		case "whatsapp":
+			if whatsAppHandler != nil {
+				projNotifier = whatsAppHandler
+			}
+		case "discord":
+			if discordHandler != nil {
+				projNotifier = discordHandler
+			}
+		default:
+			projNotifier = web.ReminderNotifier{}
+		}
+
+		if projNotifier != nil {
+			projMon := projectmonitor.New(projMonCfg, projectStore, episodicStoreIface, projNotifier)
+			go projMon.Run(ctx)
+		} else {
+			slog.Warn("project monitor: no notifier available for channel", "channel", projMonCfg.Channel)
 		}
 	}
 
