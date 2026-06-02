@@ -26,6 +26,7 @@ import (
 	"github.com/marcoantonios1/Agent-OS/internal/channels/web"
 	"github.com/marcoantonios1/Agent-OS/internal/voice"
 	"github.com/marcoantonios1/Agent-OS/internal/heartbeat"
+	"github.com/marcoantonios1/Agent-OS/internal/monitors/inbox"
 	"github.com/marcoantonios1/Agent-OS/internal/types"
 	"github.com/marcoantonios1/Agent-OS/internal/channels/whatsApp"
 	"github.com/marcoantonios1/Agent-OS/internal/costguard"
@@ -122,8 +123,9 @@ func main() {
 	if episodicStoreForRouter != nil {
 		episodicStoreIface = episodicStoreForRouter
 	}
+	emailProvider := newEmailProvider(ctx, cfg)
 	globalRegistry := skills.NewGlobalRegistry(
-		newEmailProvider(ctx, cfg),
+		emailProvider,
 		newCalendarProvider(ctx, cfg),
 		newSearchProvider(cfg),
 		approvals,
@@ -348,6 +350,36 @@ func main() {
 		go hbWorker.Run(ctx)
 	} else {
 		slog.Info("HEARTBEAT_INTERVAL not set — heartbeat worker disabled")
+	}
+
+	// ── inbox monitor ─────────────────────────────────────────────────────────
+	inboxCfg := inbox.ConfigFromEnv()
+	if inboxCfg.Interval > 0 && inboxCfg.UserID != "" && emailProvider != nil && episodicStoreIface != nil {
+		var inboxNotifier inbox.Notifier
+		switch inboxCfg.Channel {
+		case "whatsapp":
+			if whatsAppHandler != nil {
+				inboxNotifier = whatsAppHandler
+			}
+		case "discord":
+			if discordHandler != nil {
+				inboxNotifier = discordHandler
+			}
+		default:
+			inboxNotifier = web.ReminderNotifier{}
+		}
+
+		if inboxNotifier != nil {
+			monitor := inbox.New(inboxCfg, emailProvider, llm, episodicStoreIface, inboxNotifier)
+			go monitor.Run(ctx)
+			slog.Info("inbox monitor: started",
+				"interval", inboxCfg.Interval,
+				"channel", inboxCfg.Channel,
+				"user_id", inboxCfg.UserID,
+			)
+		} else {
+			slog.Warn("inbox monitor: no notifier available for channel", "channel", inboxCfg.Channel)
+		}
 	}
 
 	// Block until SIGINT or SIGTERM.
