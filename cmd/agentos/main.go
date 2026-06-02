@@ -372,11 +372,6 @@ func main() {
 		if inboxNotifier != nil {
 			monitor := inbox.New(inboxCfg, emailProvider, llm, episodicStoreIface, inboxNotifier)
 			go monitor.Run(ctx)
-			slog.Info("inbox monitor: started",
-				"interval", inboxCfg.Interval,
-				"channel", inboxCfg.Channel,
-				"user_id", inboxCfg.UserID,
-			)
 		} else {
 			slog.Warn("inbox monitor: no notifier available for channel", "channel", inboxCfg.Channel)
 		}
