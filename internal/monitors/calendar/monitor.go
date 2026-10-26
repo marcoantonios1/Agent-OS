@@ -25,12 +25,12 @@ type Notifier interface {
 
 // Config holds all runtime configuration for the calendar monitor.
 type Config struct {
-	Interval    time.Duration // how often to check (default 1h)
-	Lookahead   time.Duration // how far ahead to look (default 24h)
-	BriefBefore time.Duration // how long before event to send brief (default 30m)
-	Channel     types.ChannelID
-	UserID      string
-	Model       string
+	Interval  time.Duration  // how often to check (default 5m; bounds reminder lateness)
+	Lookahead time.Duration  // how far ahead to look (default 48h; must cover the night-before slot)
+	Location  *time.Location // timezone for the night-before/morning/noon slots (default time.Local)
+	Channel   types.ChannelID
+	UserID    string
+	Model     string
 }
 
 // ConfigFromEnv reads Config from environment variables.
@@ -40,12 +40,12 @@ func ConfigFromEnv() Config {
 		return Config{}
 	}
 	cfg := Config{
-		Interval:    1 * time.Hour,
-		Lookahead:   24 * time.Hour,
-		BriefBefore: 30 * time.Minute,
-		Channel:     types.ChannelID(os.Getenv("CALENDAR_MONITOR_CHANNEL")),
-		UserID:      os.Getenv("CALENDAR_MONITOR_USER_ID"),
-		Model:       os.Getenv("CALENDAR_MONITOR_MODEL"),
+		Interval:  5 * time.Minute,
+		Lookahead: 48 * time.Hour,
+		Location:  time.Local,
+		Channel:   types.ChannelID(os.Getenv("CALENDAR_MONITOR_CHANNEL")),
+		UserID:    os.Getenv("CALENDAR_MONITOR_USER_ID"),
+		Model:     os.Getenv("CALENDAR_MONITOR_MODEL"),
 	}
 	if v := os.Getenv("CALENDAR_MONITOR_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
@@ -57,9 +57,11 @@ func ConfigFromEnv() Config {
 			cfg.Lookahead = d
 		}
 	}
-	if v := os.Getenv("CALENDAR_MONITOR_BRIEF_BEFORE"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
-			cfg.BriefBefore = d
+	if v := os.Getenv("CALENDAR_MONITOR_TIMEZONE"); v != "" {
+		if loc, err := time.LoadLocation(v); err == nil {
+			cfg.Location = loc
+		} else {
+			slog.Warn("calendar monitor: invalid CALENDAR_MONITOR_TIMEZONE, using local time", "value", v, "error", err)
 		}
 	}
 	if cfg.Model == "" {
@@ -69,29 +71,39 @@ func ConfigFromEnv() Config {
 }
 
 // Monitor polls the calendar on a configurable interval and sends enriched
-// event briefs shortly before each event starts.
+// event briefs at fixed points before each event (see ReminderSlots).
 type Monitor struct {
 	cfg      Config
 	calendar calendar.CalendarProvider
 	llm      costguard.LLMClient
 	episodic episodic.Store
+	sent     SentStore
 	notifier Notifier
 	log      *slog.Logger
 }
 
 // New returns a Monitor. Call Run in a goroutine to start polling.
+// A nil sent store falls back to an in-memory one (not persisted across restarts).
 func New(
 	cfg Config,
 	calProv calendar.CalendarProvider,
 	llmClient costguard.LLMClient,
 	episodicStore episodic.Store,
+	sent SentStore,
 	notifier Notifier,
 ) *Monitor {
+	if cfg.Location == nil {
+		cfg.Location = time.Local
+	}
+	if sent == nil {
+		sent = NewMemorySentStore()
+	}
 	return &Monitor{
 		cfg:      cfg,
 		calendar: calProv,
 		llm:      llmClient,
 		episodic: episodicStore,
+		sent:     sent,
 		notifier: notifier,
 		log:      slog.Default(),
 	}
@@ -109,77 +121,76 @@ func (m *Monitor) Run(ctx context.Context) {
 	m.log.Info("calendar monitor: started",
 		"interval", m.cfg.Interval,
 		"lookahead", m.cfg.Lookahead,
-		"brief_before", m.cfg.BriefBefore,
+		"timezone", m.cfg.Location.String(),
 		"channel", m.cfg.Channel,
 		"user_id", m.cfg.UserID,
 	)
-	m.check(ctx) // run immediately on startup
+	m.check(ctx, time.Now()) // run immediately on startup
 	for {
 		select {
 		case <-ctx.Done():
 			m.log.Info("calendar monitor: stopped")
 			return
 		case <-ticker.C:
-			m.check(ctx)
+			m.check(ctx, time.Now())
 		}
 	}
 }
 
 // RunOnce runs exactly one check cycle. Exported for testing.
 func (m *Monitor) RunOnce(ctx context.Context) {
-	m.check(ctx)
+	m.check(ctx, time.Now())
+}
+
+// RunOnceAt runs one check cycle as if the current time were now. Exported for testing.
+func (m *Monitor) RunOnceAt(ctx context.Context, now time.Time) {
+	m.check(ctx, now)
 }
 
 // check performs one full calendar check cycle.
-func (m *Monitor) check(ctx context.Context) {
-	now := time.Now()
-	from := now
-	to := now.Add(m.cfg.Lookahead)
-
-	events, err := m.calendar.List(ctx, from, to)
+func (m *Monitor) check(ctx context.Context, now time.Time) {
+	events, err := m.calendar.List(ctx, now, now.Add(m.cfg.Lookahead))
 	if err != nil {
 		m.log.WarnContext(ctx, "calendar monitor: list failed", "error", err)
 		return
 	}
-	if len(events) == 0 {
-		return
-	}
 
 	for _, ev := range events {
-		// Only brief events that start within the BriefBefore window.
-		timeUntilStart := ev.Start.Sub(now)
-		if timeUntilStart < 0 || timeUntilStart > m.cfg.BriefBefore {
-			continue
+		if ev.AllDay || !ev.Start.After(now) {
+			continue // all-day and already-started events don't need briefs
 		}
-		if ev.AllDay {
-			continue // all-day events don't need pre-event briefs
-		}
-		m.maybeBriefEvent(ctx, ev, timeUntilStart)
+		m.maybeBriefEvent(ctx, ev, now)
 	}
 }
 
-// maybeBriefEvent sends an enriched brief for ev if it hasn't already been briefed.
-func (m *Monitor) maybeBriefEvent(ctx context.Context, ev calendar.Event, timeUntil time.Duration) {
-	// Check episodic memory: already briefed?
-	briefKey := fmt.Sprintf("calendar-brief:%s", ev.ID)
-	memories, err := m.episodic.SearchByText(ctx, m.cfg.UserID, briefKey, 1)
-	if err != nil {
-		m.log.WarnContext(ctx, "calendar monitor: episodic search failed", "event_id", ev.ID, "error", err)
-		// Include on error — prefer over-notifying to missing an event.
-	} else {
-		for _, mem := range memories {
-			if mem.Distance < 0.15 && strings.Contains(mem.Content, ev.ID) {
-				m.log.InfoContext(ctx, "calendar monitor: event already briefed", "event_id", ev.ID)
-				return
-			}
+// maybeBriefEvent sends a brief for ev if one of its reminder slots is due and
+// hasn't been sent. When several slots are due at once (e.g. after downtime)
+// only one brief goes out and all due slots are marked sent.
+func (m *Monitor) maybeBriefEvent(ctx context.Context, ev calendar.Event, now time.Time) {
+	var due []string
+	for _, slot := range ReminderSlots(ev.Start, m.cfg.Location) {
+		if slot.At.After(now) {
+			break
 		}
+		due = append(due, reminderKey(ev, slot))
+	}
+	if len(due) == 0 {
+		return
+	}
+	latest := due[len(due)-1]
+	sent, err := m.sent.IsSent(ctx, m.cfg.UserID, latest)
+	if err != nil {
+		m.log.WarnContext(ctx, "calendar monitor: sent lookup failed", "event_id", ev.ID, "error", err)
+		// Include on error — prefer over-notifying to missing an event.
+	}
+	if sent {
+		return
 	}
 
 	// Search episodic memory for context about this event's attendees and title.
 	contextBlock := m.buildContextBlock(ctx, ev)
 
-	// Format and send the brief.
-	brief := formatBrief(ev, timeUntil, contextBlock)
+	brief := formatBrief(ev, now, m.cfg.Location, contextBlock)
 	reminder := &sessions.Reminder{
 		ID:        uuid.NewString(),
 		UserID:    m.cfg.UserID,
@@ -189,13 +200,25 @@ func (m *Monitor) maybeBriefEvent(ctx context.Context, ev calendar.Event, timeUn
 	}
 	if err := m.notifier.NotifyReminder(ctx, reminder); err != nil {
 		m.log.WarnContext(ctx, "calendar monitor: notification failed", "event_id", ev.ID, "error", err)
-		// Still persist memory to avoid re-briefing.
+		// Still mark as sent to avoid re-briefing every tick.
 	}
-	m.log.InfoContext(ctx, "calendar monitor: brief sent", "event", ev.Title, "start", ev.Start)
+	m.log.InfoContext(ctx, "calendar monitor: brief sent", "event", ev.Title, "start", ev.Start, "slot", latest)
 
-	// Persist the brief record to episodic memory.
+	for _, key := range due {
+		if err := m.sent.MarkSent(ctx, m.cfg.UserID, key); err != nil {
+			m.log.WarnContext(ctx, "calendar monitor: failed to mark reminder sent", "error", err)
+		}
+	}
+
+	// Record the brief in episodic memory so agents can recall it.
 	m.saveMemory(ctx, fmt.Sprintf("Sent calendar brief for event %s (%s) at %s",
 		ev.ID, ev.Title, ev.Start.Format(time.RFC3339)), 0.6)
+}
+
+// reminderKey identifies one slot of one occurrence of an event. Including the
+// start time means a rescheduled event gets a fresh set of reminders.
+func reminderKey(ev calendar.Event, slot Slot) string {
+	return fmt.Sprintf("%s|%d|%s", ev.ID, ev.Start.Unix(), slot.Name)
 }
 
 // buildContextBlock searches episodic memory for context relevant to the event
@@ -249,15 +272,10 @@ func (m *Monitor) saveMemory(ctx context.Context, content string, importance flo
 }
 
 // formatBrief builds the user-facing notification message for an event.
-func formatBrief(ev calendar.Event, timeUntil time.Duration, contextBlock string) string {
+func formatBrief(ev calendar.Event, now time.Time, loc *time.Location, contextBlock string) string {
 	var sb strings.Builder
 
-	minutesUntil := int(timeUntil.Minutes())
-	sb.WriteString(fmt.Sprintf("📅 Meeting in %d minute", minutesUntil))
-	if minutesUntil != 1 {
-		sb.WriteString("s")
-	}
-	sb.WriteString(fmt.Sprintf(": %s\n", ev.Title))
+	sb.WriteString(fmt.Sprintf("📅 %s\n🕒 %s\n", ev.Title, capitalize(formatWhen(ev.Start, now, loc))))
 
 	if len(ev.Attendees) > 0 {
 		sb.WriteString(fmt.Sprintf("\nAttendees: %s", strings.Join(ev.Attendees, ", ")))
@@ -290,6 +308,13 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%d hour%s", h, pluralS(h))
 	}
 	return fmt.Sprintf("%.1f hours", hours)
+}
+
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 func pluralS(n int) string {

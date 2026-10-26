@@ -77,6 +77,8 @@ func main() {
 	var personalityStore sessions.PersonalityStore
 	var episodicExtractor *episodic.Extractor
 	var episodicStoreForRouter *episodic.SQLiteStore
+	var inboxSeenStore inbox.SeenStore
+	var calendarSentStore calendarmonitor.SentStore
 	sqlite_vec.Auto()
 	if cfg.SQLiteConfigured() {
 		db, err := memory.OpenDB(cfg.SQLitePath)
@@ -88,6 +90,8 @@ func main() {
 		userStore = memory.NewSQLiteUserStore(db)
 		reminderStore = memory.NewSQLiteReminderStore(db)
 		personalityStore = memory.NewSQLitePersonalityStore(db)
+		inboxSeenStore = inbox.NewSQLiteSeenStore(db)
+		calendarSentStore = calendarmonitor.NewSQLiteSentStore(db)
 
 		embedFn := func(ctx context.Context, text string) ([]float32, error) {
 			return llm.Embed(ctx, text)
@@ -373,7 +377,7 @@ func main() {
 		}
 
 		if inboxNotifier != nil {
-			monitor := inbox.New(inboxCfg, emailProvider, llm, episodicStoreIface, inboxNotifier)
+			monitor := inbox.New(inboxCfg, emailProvider, llm, episodicStoreIface, inboxSeenStore, inboxNotifier)
 			go monitor.Run(ctx)
 		} else {
 			slog.Warn("inbox monitor: no notifier available for channel", "channel", inboxCfg.Channel)
@@ -398,7 +402,7 @@ func main() {
 		}
 
 		if calNotifier != nil {
-			calMon := calendarmonitor.New(calMonCfg, calendarProvider, llm, episodicStoreIface, calNotifier)
+			calMon := calendarmonitor.New(calMonCfg, calendarProvider, llm, episodicStoreIface, calendarSentStore, calNotifier)
 			go calMon.Run(ctx)
 		} else {
 			slog.Warn("calendar monitor: no notifier available for channel", "channel", calMonCfg.Channel)

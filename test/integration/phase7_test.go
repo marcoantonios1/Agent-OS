@@ -409,7 +409,7 @@ func TestPhase7_MemoryInjection_ReachesAgent(t *testing.T) {
 }
 
 // TestPhase7_InboxMonitor_DeduplicatesNotifications verifies that when an email
-// is already recorded in episodic memory, the inbox monitor does not re-notify.
+// is already recorded in the seen store, the inbox monitor does not re-notify.
 func TestPhase7_InboxMonitor_DeduplicatesNotifications(t *testing.T) {
 	ctx := context.Background()
 	store := newP7EpisodicStore()
@@ -419,14 +419,9 @@ func TestPhase7_InboxMonitor_DeduplicatesNotifications(t *testing.T) {
 		{ID: "e-seen", From: "bob@example.com", Subject: "Weekly digest", Date: time.Now()},
 	}
 
-	// Pre-populate memory for e-seen — simulates a prior notification.
-	_ = store.SaveText(ctx, episodic.Memory{
-		ID:        "mem-seen",
-		UserID:    "user-p7-inbox",
-		Content:   "inbox-notified:e-seen from bob@example.com: Weekly digest",
-		Source:    "inbox_monitor",
-		CreatedAt: time.Now().Add(-30 * time.Minute),
-	})
+	// Mark e-seen as already triaged — simulates a prior check.
+	seen := inboxmonitor.NewMemorySeenStore()
+	_ = seen.MarkSeen(ctx, "user-p7-inbox", "e-seen")
 
 	// e-seen is filtered by dedup; only e-new reaches the LLM, aliased as "e1".
 	llm := &capturingScriptedLLM{
@@ -448,6 +443,7 @@ func TestPhase7_InboxMonitor_DeduplicatesNotifications(t *testing.T) {
 		&p7MockEmailProvider{emails: emails},
 		llm,
 		store,
+		seen,
 		notifier,
 	)
 
@@ -499,16 +495,16 @@ func TestPhase7_CalendarMonitor_EnrichesWithMemory(t *testing.T) {
 
 	mon := calendarmonitor.New(
 		calendarmonitor.Config{
-			Interval:    time.Hour,
-			Lookahead:   24 * time.Hour,
-			BriefBefore: 30 * time.Minute,
-			Channel:     types.ChannelID("discord"),
-			UserID:      "user-p7-cal",
-			Model:       "test-model",
+			Interval:  5 * time.Minute,
+			Lookahead: 48 * time.Hour,
+			Channel:   types.ChannelID("discord"),
+			UserID:    "user-p7-cal",
+			Model:     "test-model",
 		},
 		&p7MockCalendarProvider{events: events},
 		llm,
 		store,
+		nil,
 		notifier,
 	)
 

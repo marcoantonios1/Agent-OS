@@ -85,11 +85,15 @@ func (m *mockEpisodicStore) savedCount() int {
 
 // mockLLMInbox returns a scripted response.
 type mockLLMInbox struct {
-	content string
-	err     error
+	content    string
+	err        error
+	lastPrompt string
 }
 
-func (m *mockLLMInbox) Complete(_ context.Context, _ costguard.CompletionRequest) (costguard.CompletionResponse, error) {
+func (m *mockLLMInbox) Complete(_ context.Context, req costguard.CompletionRequest) (costguard.CompletionResponse, error) {
+	if len(req.Messages) > 0 {
+		m.lastPrompt = req.Messages[len(req.Messages)-1].Content
+	}
 	return costguard.CompletionResponse{Content: m.content}, m.err
 }
 func (m *mockLLMInbox) Stream(_ context.Context, _ costguard.CompletionRequest) (<-chan costguard.StreamChunk, error) {
@@ -134,9 +138,9 @@ func makeConfig() inbox.Config {
 	}
 }
 
-// TestInboxMonitor_DeduplicatesViaEpisodicMemory: 5 emails, 2 already in episodic
-// memory → only 3 triaged, 1 flagged important → 1 notification.
-func TestInboxMonitor_DeduplicatesViaEpisodicMemory(t *testing.T) {
+// TestInboxMonitor_SkipsSeenEmails: 5 emails, 2 already seen → only 3 triaged,
+// 1 flagged important → 1 notification.
+func TestInboxMonitor_SkipsSeenEmails(t *testing.T) {
 	emails := []email.EmailSummary{
 		{ID: "e1", From: "alice@example.com", Subject: "Q3 budget approval needed by Friday", Date: time.Now()},
 		{ID: "e2", From: "ceo@example.com", Subject: "Quick call this week?", Date: time.Now()},
@@ -145,21 +149,16 @@ func TestInboxMonitor_DeduplicatesViaEpisodicMemory(t *testing.T) {
 		{ID: "e5", From: "bot@github.com", Subject: "Build #42 passed", Date: time.Now()},
 	}
 
-	// e4 and e5 are already in memory (distance < 0.2, content contains the email ID).
-	episodicResults := map[string][]episodic.Memory{
-		"e4": {{ID: "m1", Content: "inbox-notified:e4 from news@acme.com", Distance: 0.05, CreatedAt: time.Now()}},
-		"e5": {{ID: "m2", Content: "inbox-checked:e5 from bot@github.com", Distance: 0.05, CreatedAt: time.Now()}},
-	}
-
-	store := &mockEpisodicStore{results: episodicResults}
-	llm := &mockLLMInbox{content: `["e1"]`}
-	notifier := &mockNotifier{}
-	emailProv := &mockEmailProvider{emails: emails}
-
-	mon := inbox.New(makeConfig(), emailProv, llm, store, notifier)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	seen := inbox.NewMemorySeenStore()
+	_ = seen.MarkSeen(ctx, "user1", "e4")
+	_ = seen.MarkSeen(ctx, "user1", "e5")
+
+	llm := &mockLLMInbox{content: `["e1"]`}
+	notifier := &mockNotifier{}
+	mon := inbox.New(makeConfig(), &mockEmailProvider{emails: emails}, llm, &mockEpisodicStore{}, seen, notifier)
 	mon.RunOnce(ctx)
 
 	if notifier.count() != 1 {
@@ -167,6 +166,30 @@ func TestInboxMonitor_DeduplicatesViaEpisodicMemory(t *testing.T) {
 	}
 	if !strings.Contains(notifier.last().Message, "Q3 budget") {
 		t.Errorf("notification should mention Q3 budget email, got: %s", notifier.last().Message)
+	}
+	if strings.Contains(llm.lastPrompt, "Weekly digest") || strings.Contains(llm.lastPrompt, "Build #42") {
+		t.Errorf("seen emails should not be sent to triage, prompt: %s", llm.lastPrompt)
+	}
+}
+
+// TestInboxMonitor_NoRenotifyOnNextTick: an email surfaced once is not
+// surfaced again on the following check.
+func TestInboxMonitor_NoRenotifyOnNextTick(t *testing.T) {
+	emails := []email.EmailSummary{
+		{ID: "e1", From: "alice@example.com", Subject: "Contract to sign today", Date: time.Now()},
+		{ID: "e2", From: "promo@shop.com", Subject: "50% off", Date: time.Now()},
+	}
+	llm := &mockLLMInbox{content: `["e1"]`}
+	notifier := &mockNotifier{}
+	mon := inbox.New(makeConfig(), &mockEmailProvider{emails: emails}, llm, &mockEpisodicStore{}, nil, notifier)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	mon.RunOnce(ctx)
+	mon.RunOnce(ctx)
+
+	if notifier.count() != 1 {
+		t.Fatalf("expected 1 notification across two ticks, got %d", notifier.count())
 	}
 }
 
@@ -179,7 +202,7 @@ func TestInboxMonitor_LLMError_NoNotification(t *testing.T) {
 	llm := &mockLLMInbox{err: fmt.Errorf("LLM unavailable")}
 	notifier := &mockNotifier{}
 
-	mon := inbox.New(makeConfig(), &mockEmailProvider{emails: emails}, llm, store, notifier)
+	mon := inbox.New(makeConfig(), &mockEmailProvider{emails: emails}, llm, store, nil, notifier)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	mon.RunOnce(ctx)
@@ -196,7 +219,7 @@ func TestInboxMonitor_EmailProviderError_NoNotification(t *testing.T) {
 	notifier := &mockNotifier{}
 	emailProv := &mockEmailProvider{err: fmt.Errorf("connection refused")}
 
-	mon := inbox.New(makeConfig(), emailProv, llm, store, notifier)
+	mon := inbox.New(makeConfig(), emailProv, llm, store, nil, notifier)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	mon.RunOnce(ctx)
