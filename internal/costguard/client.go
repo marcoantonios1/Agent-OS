@@ -30,14 +30,21 @@ type Client struct {
 	log        *slog.Logger
 }
 
-// NewFromEnv creates a Client reading COSTGUARD_URL and COSTGUARD_API_KEY from
-// the environment. It panics if COSTGUARD_URL is not set.
+// NewFromEnv creates a Client reading COSTGUARD_URL, COSTGUARD_API_KEY and
+// COSTGUARD_TIMEOUT (default 60s) from the environment. It panics if
+// COSTGUARD_URL is not set.
 func NewFromEnv() *Client {
 	url := os.Getenv("COSTGUARD_URL")
 	if url == "" {
 		panic("COSTGUARD_URL environment variable is not set")
 	}
-	return New(url, os.Getenv("COSTGUARD_API_KEY"))
+	c := New(url, os.Getenv("COSTGUARD_API_KEY"))
+	if v := os.Getenv("COSTGUARD_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			c.httpClient.Timeout = d
+		}
+	}
+	return c
 }
 
 // New creates a Client with the given base URL and API key.

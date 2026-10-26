@@ -116,12 +116,12 @@ func (n *mockCalNotifier) last() *sessions.Reminder {
 
 func makeCalConfig() calendarmonitor.Config {
 	return calendarmonitor.Config{
-		Interval:    time.Hour,
-		Lookahead:   24 * time.Hour,
-		BriefBefore: 30 * time.Minute,
-		Channel:     types.ChannelID("discord"),
-		UserID:      "user1",
-		Model:       "test-model",
+		Interval:  5 * time.Minute,
+		Lookahead: 48 * time.Hour,
+		Location:  time.UTC,
+		Channel:   types.ChannelID("discord"),
+		UserID:    "user1",
+		Model:     "test-model",
 	}
 }
 
@@ -140,7 +140,7 @@ func TestCalendarMonitor_EventInWindow_BriefSent(t *testing.T) {
 
 	store := &mockEpisodicCalStore{}
 	notifier := &mockCalNotifier{}
-	mon := calendarmonitor.New(makeCalConfig(), &mockCalendarProvider{events: events}, &mockLLMCal{}, store, notifier)
+	mon := calendarmonitor.New(makeCalConfig(), &mockCalendarProvider{events: events}, &mockLLMCal{}, store, nil, notifier)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -164,39 +164,69 @@ func TestCalendarMonitor_EventInWindow_BriefSent(t *testing.T) {
 	}
 }
 
-// TestCalendarMonitor_AlreadyBriefed_Skipped: event already briefed → no notification sent.
-func TestCalendarMonitor_AlreadyBriefed_Skipped(t *testing.T) {
+// TestCalendarMonitor_SlotSentOnce: the same due slot is not re-sent on later ticks.
+func TestCalendarMonitor_SlotSentOnce(t *testing.T) {
 	now := time.Now()
 	events := []calendar.Event{
-		{
-			ID:    "evt-already",
-			Title: "Team Standup",
-			Start: now.Add(10 * time.Minute),
-			End:   now.Add(40 * time.Minute),
-		},
-	}
-
-	store := &mockEpisodicCalStore{
-		results: map[string][]episodic.Memory{
-			"evt-already": {
-				{
-					ID:        "mem-1",
-					Content:   "Sent calendar brief for event evt-already (Team Standup) at 2026-06-02T10:00:00Z",
-					Distance:  0.05,
-					CreatedAt: time.Now().Add(-5 * time.Minute),
-				},
-			},
-		},
+		{ID: "evt-once", Title: "Team Standup", Start: now.Add(10 * time.Minute), End: now.Add(40 * time.Minute)},
 	}
 	notifier := &mockCalNotifier{}
-	mon := calendarmonitor.New(makeCalConfig(), &mockCalendarProvider{events: events}, &mockLLMCal{}, store, notifier)
+	mon := calendarmonitor.New(makeCalConfig(), &mockCalendarProvider{events: events}, &mockLLMCal{}, &mockEpisodicCalStore{}, nil, notifier)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	mon.RunOnce(ctx)
+	mon.RunOnce(ctx)
+	mon.RunOnce(ctx)
 
-	if notifier.count() != 0 {
-		t.Errorf("expected 0 notifications for already-briefed event, got %d", notifier.count())
+	if notifier.count() != 1 {
+		t.Errorf("expected 1 notification across three ticks, got %d", notifier.count())
+	}
+}
+
+// TestCalendarMonitor_EveningEvent_FullSchedule: an 18:00 event is briefed the
+// night before, in the morning, at noon, 1h before and 30m before — and never
+// on the ticks in between.
+func TestCalendarMonitor_EveningEvent_FullSchedule(t *testing.T) {
+	start := time.Date(2026, 10, 28, 18, 0, 0, 0, time.UTC)
+	events := []calendar.Event{{ID: "evt-eve", Title: "Dinner", Start: start, End: start.Add(2 * time.Hour)}}
+	notifier := &mockCalNotifier{}
+	mon := calendarmonitor.New(makeCalConfig(), &mockCalendarProvider{events: events}, &mockLLMCal{}, &mockEpisodicCalStore{}, nil, notifier)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// Tick every 5 minutes from 2 days before until the event starts.
+	for now := start.Add(-48 * time.Hour); now.Before(start); now = now.Add(5 * time.Minute) {
+		mon.RunOnceAt(ctx, now)
+	}
+
+	if notifier.count() != 5 {
+		t.Fatalf("expected 5 briefs, got %d", notifier.count())
+	}
+	wantPrefixes := []string{"🕒 Tomorrow at 18:00", "🕒 Today at 18:00 — in 10 hours", "🕒 Today at 18:00 — in 6 hours",
+		"🕒 Today at 18:00 — in 1 hour", "🕒 Today at 18:00 — in 30 minutes"}
+	for i, want := range wantPrefixes {
+		if !strings.Contains(notifier.msgs[i].Message, want) {
+			t.Errorf("brief %d: want %q, got:\n%s", i, want, notifier.msgs[i].Message)
+		}
+	}
+}
+
+// TestCalendarMonitor_CatchUp_SendsOnlyLatestSlot: when several slots are
+// overdue (e.g. after downtime), one brief is sent, not one per slot.
+func TestCalendarMonitor_CatchUp_SendsOnlyLatestSlot(t *testing.T) {
+	start := time.Date(2026, 10, 28, 18, 0, 0, 0, time.UTC)
+	events := []calendar.Event{{ID: "evt-late", Title: "Dinner", Start: start, End: start.Add(time.Hour)}}
+	notifier := &mockCalNotifier{}
+	mon := calendarmonitor.New(makeCalConfig(), &mockCalendarProvider{events: events}, &mockLLMCal{}, &mockEpisodicCalStore{}, nil, notifier)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	mon.RunOnceAt(ctx, start.Add(-50*time.Minute)) // night-before, morning, noon and 1h all overdue
+	mon.RunOnceAt(ctx, start.Add(-45*time.Minute))
+
+	if notifier.count() != 1 {
+		t.Fatalf("expected 1 catch-up brief, got %d", notifier.count())
 	}
 }
 
@@ -226,7 +256,7 @@ func TestCalendarMonitor_EpisodicContext_IncludedInBrief(t *testing.T) {
 		},
 	}
 	notifier := &mockCalNotifier{}
-	mon := calendarmonitor.New(makeCalConfig(), &mockCalendarProvider{events: events}, &mockLLMCal{}, store, notifier)
+	mon := calendarmonitor.New(makeCalConfig(), &mockCalendarProvider{events: events}, &mockLLMCal{}, store, nil, notifier)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -249,7 +279,7 @@ func TestCalendarMonitor_ProviderError_NoNotification(t *testing.T) {
 	store := &mockEpisodicCalStore{}
 	notifier := &mockCalNotifier{}
 	calProv := &mockCalendarProvider{err: fmt.Errorf("google calendar: connection refused")}
-	mon := calendarmonitor.New(makeCalConfig(), calProv, &mockLLMCal{}, store, notifier)
+	mon := calendarmonitor.New(makeCalConfig(), calProv, &mockLLMCal{}, store, nil, notifier)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

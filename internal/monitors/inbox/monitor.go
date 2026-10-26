@@ -69,30 +69,38 @@ func ConfigFromEnv() Config {
 }
 
 // Monitor polls the inbox on a configurable interval and proactively notifies
-// the user about important emails. It uses episodic memory to ensure each email
-// is surfaced at most once.
+// the user about important emails. It uses a SeenStore to ensure each email is
+// triaged and surfaced at most once, and records surfaced emails in episodic
+// memory so agents can recall them later.
 type Monitor struct {
 	cfg      Config
 	email    email.EmailProvider
 	llm      costguard.LLMClient
 	episodic episodic.Store
+	seen     SeenStore
 	notifier Notifier
 	log      *slog.Logger
 }
 
 // New returns a Monitor. Start Run() in a goroutine to begin polling.
+// A nil seen store falls back to an in-memory one (not persisted across restarts).
 func New(
 	cfg Config,
 	emailProv email.EmailProvider,
 	llmClient costguard.LLMClient,
 	episodicStore episodic.Store,
+	seen SeenStore,
 	notifier Notifier,
 ) *Monitor {
+	if seen == nil {
+		seen = NewMemorySeenStore()
+	}
 	return &Monitor{
 		cfg:      cfg,
 		email:    emailProv,
 		llm:      llmClient,
 		episodic: episodicStore,
+		seen:     seen,
 		notifier: notifier,
 		log:      slog.Default(),
 	}
@@ -145,8 +153,8 @@ func (m *Monitor) check(ctx context.Context) {
 		return
 	}
 
-	// 2. Filter out emails already notified via episodic memory.
-	unseen := m.filterAlreadyNotified(ctx, emails)
+	// 2. Filter out emails already triaged on a previous tick.
+	unseen := m.filterAlreadySeen(ctx, emails)
 	if len(unseen) == 0 {
 		m.log.InfoContext(ctx, "inbox monitor: all emails already notified")
 		return
@@ -180,46 +188,22 @@ func (m *Monitor) check(ctx context.Context) {
 	}
 	m.log.InfoContext(ctx, "inbox monitor: notification sent", "count", len(important))
 
-	// 5. Persist episodic memories for all surfaced emails.
+	// 5. Persist episodic memories for surfaced emails and mark everything
+	// triaged this tick as seen.
 	m.persistNotified(ctx, important)
-
-	// 6. Mark remaining unseen (non-important) emails as checked too.
-	importantIDs := make(map[string]bool, len(important))
-	for _, e := range important {
-		importantIDs[e.ID] = true
-	}
-	var nonImportant []email.EmailSummary
-	for _, e := range unseen {
-		if !importantIDs[e.ID] {
-			nonImportant = append(nonImportant, e)
-		}
-	}
-	m.markChecked(ctx, nonImportant)
+	m.markChecked(ctx, unseen)
 }
 
-// filterAlreadyNotified returns emails that have not yet been surfaced to the
-// user. It searches episodic memory for each email's deduplication key.
-// On search error, the email is included (prefer over-notifying to missing it).
-func (m *Monitor) filterAlreadyNotified(ctx context.Context, emails []email.EmailSummary) []email.EmailSummary {
+// filterAlreadySeen returns emails that have not been triaged before.
+// On lookup error, the email is included (prefer over-notifying to missing it).
+func (m *Monitor) filterAlreadySeen(ctx context.Context, emails []email.EmailSummary) []email.EmailSummary {
 	var unseen []email.EmailSummary
 	for _, e := range emails {
-		key := deduplicationKey(e)
-		// Search memory for this specific key — k=1, look for exact-ish match.
-		memories, err := m.episodic.SearchByText(ctx, m.cfg.UserID, key, 1)
+		seen, err := m.seen.IsSeen(ctx, m.cfg.UserID, e.ID)
 		if err != nil {
-			m.log.WarnContext(ctx, "inbox monitor: episodic search failed", "error", err)
-			unseen = append(unseen, e) // include on error
-			continue
+			m.log.WarnContext(ctx, "inbox monitor: seen lookup failed", "error", err)
 		}
-		alreadyNotified := false
-		for _, mem := range memories {
-			// Distance < 0.2 indicates a near-exact match for this email's key.
-			if mem.Distance < 0.2 && strings.Contains(mem.Content, e.ID) {
-				alreadyNotified = true
-				break
-			}
-		}
-		if !alreadyNotified {
+		if !seen {
 			unseen = append(unseen, e)
 		}
 	}
@@ -283,12 +267,13 @@ func (m *Monitor) triageEmails(ctx context.Context, emails []email.EmailSummary)
 	return important, nil
 }
 
-// markChecked persists a low-importance memory for each email so the monitor
-// doesn't re-evaluate it on the next tick.
+// markChecked records each email in the seen store so the monitor doesn't
+// re-evaluate it on the next tick.
 func (m *Monitor) markChecked(ctx context.Context, emails []email.EmailSummary) {
 	for _, e := range emails {
-		m.saveMemory(ctx, fmt.Sprintf("inbox-checked:%s", e.ID),
-			fmt.Sprintf("Checked email %s from %s: %s", e.ID, e.From, e.Subject), 0.1)
+		if err := m.seen.MarkSeen(ctx, m.cfg.UserID, e.ID); err != nil {
+			m.log.WarnContext(ctx, "inbox monitor: failed to mark email seen", "error", err)
+		}
 	}
 }
 
@@ -316,12 +301,6 @@ func (m *Monitor) saveMemory(ctx context.Context, _, content string, importance 
 	if err := m.episodic.SaveText(ctx, mem); err != nil {
 		m.log.WarnContext(ctx, "inbox monitor: failed to save memory", "error", err)
 	}
-}
-
-// deduplicationKey returns a string suitable for episodic memory search that
-// uniquely identifies an email without relying on provider-specific IDs alone.
-func deduplicationKey(e email.EmailSummary) string {
-	return fmt.Sprintf("email %s from %s: %s", e.ID, e.From, e.Subject)
 }
 
 // formatEmailListForPrompt serialises a list of EmailSummary for the triage prompt.
@@ -368,8 +347,9 @@ func truncate(s string, n int) string {
 
 const triagePrompt = `You are an email triage assistant. Identify which emails need the user's attention.
 
-Flag if: requires response/decision within 48h, contains deadline/meeting/action item, seems urgent.
-Do NOT flag: newsletters, automated notifications (unless failures), FYI-only emails.
+Flag ONLY if a real person or service needs the user to act: a reply or decision within 48h, a deadline, a meeting invite or change, a bill/payment problem, a security alert the user did not trigger, or a failure.
+Do NOT flag: newsletters, promotions, discounts, contests, marketing, shopping or delivery updates, one-time passwords / verification codes, daily agendas or digests, receipts, FYI-only emails.
+When in doubt, do NOT flag. Most emails are not important.
 
 Emails:
 {email_list}
